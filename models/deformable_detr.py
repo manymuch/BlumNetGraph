@@ -117,7 +117,7 @@ class DeformableDETR(nn.Module):
             self.transformer.decoder.bbox_embed = None
 
     def forward(self, samples: NestedTensor):
-        """ The forward expects a NestedTensor, which consists of:
+        """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
@@ -394,31 +394,31 @@ class MLP(nn.Module):
         return x
 
 
-def build(args):
-    num_classes = 2 #[target, non-target]
+def build(config):
+    num_classes = 2  # [target, non-target]
 
-    device = torch.device(args.device)
+    device = torch.device(config["device"])
 
-    backbone = build_backbone(args)
+    backbone = build_backbone(config)
 
-    transformer = build_deforamble_transformer(args)
+    transformer = build_deforamble_transformer(config)
     model = DeformableDETR(
         backbone,
         transformer,
         num_classes=num_classes,
-        num_queries=args.num_queries,
-        num_feature_levels=args.num_feature_levels,
-        aux_loss=args.aux_loss,
-        with_box_refine=args.with_box_refine,
-        cpts=args.npt,
-        gid=args.gid,
-        out_pts=args.out_pts,
+        num_queries=config.get("num_queries", 1024),
+        num_feature_levels=config.get("num_feature_levels", 4),
+        aux_loss=config.get("aux_loss", False),
+        with_box_refine=config.get("with_box_refine", False),
+        cpts=config.get("npt", 2),
+        gid=config.get("gid", False),
+        out_pts=config.get("out_pts", 0),
     )
 
-    matcher = build_matcher(args)
+    matcher = build_matcher(config)
     weight_dict = {
-        'loss_ce': args.cls_loss_coef,
-        'loss_bbox': args.bbox_loss_coef,
+        'loss_ce': config.get("cls_loss_coef", 1),
+        'loss_bbox': config.get("bbox_loss_coef", 5),
         'loss_gid': 0.5,
     }
     add_items = {}
@@ -427,25 +427,25 @@ def build(args):
             if prefix == 'c':
                 add_items[f"{prefix}{k}"] = v
             else:
-                relative_v = v / 10 # among all query, only about 10% is for points
-                add_items[f"{prefix}{k}"] = args.pts_loss_coef * relative_v
+                relative_v = v / 10  # among all queries, only about 10% is for points
+                add_items[f"{prefix}{k}"] = config.get("pts_loss_coef", 1) * relative_v
     weight_dict.update(add_items)
 
-    # TODO this is a hack
-    if args.aux_loss:
+    if config.get("aux_loss", False):
         aux_weight_dict = {}
-        for i in range(args.dec_layers - 1):
+        dec_layers = config.get("dec_layers", 6)
+        for i in range(dec_layers - 1):
             aux_weight_dict.update({k + f'_{i}': v for k, v in weight_dict.items()})
         aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
     criterion = SetCriterion(
-        matcher, weight_dict, 
+        matcher, weight_dict,
         losses=['labels', 'boxes'],
         gt_pts_key="curves",
         gt_pts_label='clabels',
-        gid_label=("gids" if args.gid else None), # graph id is not used for most datasets
-        focal_alpha=args.focal_alpha,
+        gid_label=("gids" if config.get("gid", False) else None),  # graph id is not used for most datasets
+        focal_alpha=config.get("focal_alpha", 0.25),
     )
     criterion.to(device)
 

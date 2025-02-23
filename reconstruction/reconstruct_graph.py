@@ -253,12 +253,20 @@ class PostProcess(nn.Module):
         Args:
             pred, the result of ${self._forward_curves}[0]
             eval_score, float, score threshold of curves
-            src_img, array of input image
+            src_img, array of input image (can be CHW or HWC format)
+            dks, int, kernel size for dilation
+            thinning, bool, whether to apply morphological thinning
+            ch3mask, bool, whether to return a 3-channel mask
+            vmask, int, value for the mask (typically 1 or 255)
 
         Return:
             img, array of drawing predictions on src_img
             pred_mask, array of drawing predictions on mask
         """
+        # Handle CHW format by converting to HWC
+        if src_img.shape[0] == 3:  # If in CHW format
+            src_img = np.transpose(src_img, (1, 2, 0))
+        
         h, w = src_img.shape[:2]
         pred_mask = np.zeros((h, w), dtype=np.uint8)
 
@@ -270,18 +278,25 @@ class PostProcess(nn.Module):
         ids = _scores > eval_score
         pred_pts = _lines[ids].astype(np.int32)
 
-        cv2.polylines(pred_mask, pred_pts, False, color=255, thickness=1) # for SymPASCAL thickness=3
+        cv2.polylines(pred_mask, pred_pts, False, color=255, thickness=1)
         element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks, dks))
         pred_mask = cv2.dilate(pred_mask, element)
-        if thinning: # fast thinning
-            pred_mask = morphology.skeletonize(pred_mask, method='lee').astype(np.uint8) 
+        if thinning:
+            pred_mask = morphology.skeletonize(pred_mask, method='lee').astype(np.uint8)
             pred_mask = cv2.dilate(pred_mask, element)
+        
         pred_mask_3ch = (cv2.cvtColor(pred_mask, cv2.COLOR_GRAY2BGR) > 0)
         pred_mask = pred_mask_3ch[:, :, 0]
-        img = np.copy(src_img)
+        
+        # Ensure src_img is float32 for multiplication
+        img = src_img.astype(np.float32)
         img = img * (1 - pred_mask_3ch)
         img[:, :, 2] = img[:, :, 2] + 255 * pred_mask
         img[:, :, 1] = img[:, :, 1] + 255 * pred_mask
+        
+        # Convert back to uint8
+        img = np.clip(img, 0, 255).astype(np.uint8)
+        
         if ch3mask:
             return img, pred_mask_3ch * vmask
         return img, pred_mask * vmask

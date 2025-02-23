@@ -193,6 +193,6 @@ class HungarianMatcher(nn.Module):
             return indexes
 
 
-def build_matcher(args):
-    return HungarianMatcher(cost_class=args.set_cost_class,
-                            cost_bbox=args.set_cost_bbox)
+def build_matcher(config):
+    return HungarianMatcher(cost_class=config["set_cost_class"],
+                            cost_bbox=config["set_cost_bbox"])

@@ -1,0 +1,75 @@
+wandb:
+  project: BlumNetGraph
+  name: blumnet_from_detr
+  dir: "tmp"
+# General parameters
+device: cuda
+seed: 42
+# resume: "/home/jimzhang/Projects/BlumNet/BlumNet/exps/swin_small_sk1491_curves_pts/checkpoint0200.pth"
+resume: ""
+eval_score: 0.65
+output_dir: "tmp/checkpoints"
+
+# Optimizer parameters
+lr: 0.0002
+lr_backbone: 0.00002
+lr_linear_proj_mult: 0.1
+weight_decay: 0.0001
+lr_drop: 160
+clip_max_norm: 0.1
+
+# Training parameters
+batch_size: 1
+epochs: 200
+num_workers: 2
+
+# Backbone parameters
+backbone: swin_small
+dilation: false
+position_embedding: sine
+position_embedding_scale: 6.283185307179586
+num_feature_levels: 3
+lr_backbone_names: ["backbone.0"]
+lr_linear_proj_names: ["reference_points", "sampling_offsets"]
+
+# Transformer parameters
+enc_layers: 6
+dec_layers: 6
+dim_feedforward: 1024
+hidden_dim: 256
+dropout: 0.1
+nheads: 8
+num_queries: 1024
+dec_n_points: 8
+enc_n_points: 8
+
+# Output parameters
+out_pts: 128
+gid: false
+aux_loss: false
+
+# Matcher parameters
+set_cost_class: 1
+set_cost_bbox: 5
+cls_loss_coef: 1
+bbox_loss_coef: 5
+focal_alpha: 0.25
+pts_loss_coef: 1
+
+# Using the same num_queries as transformer
+with_box_refine: false
+frozen_weights: null
+
+# Dataset parameters
+rule: overlap_10_0.6
+dataset_file: sk1491
+datafile_mid: ""
+npt: 2
+data_root: "data"
+coco_panoptic_path: ""
+remove_difficult: false
+train_split: "data/WH-SYMMAX/train/train_im_pair.lst"
+val_split: "data/WH-SYMMAX/test/test_im_pair.lst"
+
+# Visualization parameters
+visual_type: lines

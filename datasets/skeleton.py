@@ -224,25 +224,25 @@ def make_skeleton_transforms(image_set, data_name):
     raise ValueError(f'unknown {image_set}')
 
 
-def build(image_set, args):
-    assert args.dataset_file in DATASET_OPTIONS
+def build(image_set, config):
+    assert config["dataset_file"] in DATASET_OPTIONS
     if image_set == 'train':
-        fileNames = f'{args.data_root}/{args.dataset_file}/train/train{args.datafile_mid}_pair.lst'
+        fileNames = f'{config["data_root"]}/{config["dataset_file"]}/train/train{config["datafile_mid"]}_pair.lst'
         _DATA_CLS = SkDataset
     elif image_set == 'val':
-        fileNames = f'{args.data_root}/{args.dataset_file}/test/test{args.datafile_mid}_pair.lst'
+        fileNames = f'{config["data_root"]}/{config["dataset_file"]}/test/test{config["datafile_mid"]}_pair.lst'
         _DATA_CLS = SkDataset
     elif image_set == 'test':
-        fileNames = f'{args.data_root}/{args.dataset_file}/test/test{args.datafile_mid}_pair.lst'
+        fileNames = f'{config["data_root"]}/{config["dataset_file"]}/test/test{config["datafile_mid"]}_pair.lst'
         _DATA_CLS = SkTestset
     elif image_set == 'infer':
-        fileNames = os.listdir(f'{args.data_root}')
+        fileNames = os.listdir(f'{config["data_root"]}')
         _DATA_CLS = SkInferset
     else:
         raise ValueError('')
-    dataset = _DATA_CLS(fileNames, args.data_root,
-                        transforms=make_skeleton_transforms(image_set, args.dataset_file),
-                        data_name=args.dataset_file,
-                        base_size=512, npt=args.npt, rule=args.rule)
+    dataset = _DATA_CLS(fileNames, config["data_root"],
+                        transforms=make_skeleton_transforms(image_set, config["dataset_file"]),
+                        data_name=config["dataset_file"],
+                        base_size=512, npt=config["npt"], rule=config["rule"])
     return dataset
 
