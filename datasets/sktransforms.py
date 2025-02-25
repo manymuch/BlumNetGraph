@@ -8,7 +8,7 @@ import numbers
 import torch
 import torchvision.transforms.functional as F
 import numpy as np
-from lib.libcommon.rotate_any_angle import get_rotation_homo
+from .rotate_any_angle import get_rotation_homo
 from PIL import Image
 
 

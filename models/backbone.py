@@ -20,7 +20,7 @@ from .position_encoding import build_position_encoding
 from .backbones.create_inception import Inception3
 from .backbones.swin_transformer import SwinTransfomerNet
 from .backbones.vgg import VGGfs, cfg
-from lib.misc import NestedTensor, is_main_process
+from datasets.data_prefetcher import NestedTensor
 
 
 class FrozenBatchNorm2d(torch.nn.Module):
@@ -128,8 +128,7 @@ class Backbone(BackboneBase):
                 "models", pretrained_swin_paths[name])
             backbone = SwinTransfomerNet(name)
             backbone.init_weights(pretrained=pretrained_path)
-            print(f"Finished loading official pretraied weights: {pretrained_path}. "
-                  "Please ignore above mismatch 'size mismatch for layers.x.blocks.x.attn.relative_position_index'")
+            print(f"Loaded pretrained weights from {pretrained_path}.")
         elif name in ['resnet50', 'resnet101']:
             norm_layer = FrozenBatchNorm2d
             backbone = getattr(torchvision.models, name)(

@@ -1,12 +1,11 @@
 wandb:
   project: BlumNetGraph
-  name: blumnet_from_detr
+  name: blumnet_refactor_2
   dir: "tmp"
 # General parameters
 device: cuda
 seed: 42
-# resume: "/home/jimzhang/Projects/BlumNet/BlumNet/exps/swin_small_sk1491_curves_pts/checkpoint0200.pth"
-resume: ""
+load_path: "pretrain"
 eval_score: 0.65
 output_dir: "tmp/checkpoints"
 
@@ -22,6 +21,7 @@ clip_max_norm: 0.1
 batch_size: 1
 epochs: 200
 num_workers: 2
+eval_epochs: 10
 
 # Backbone parameters
 backbone: swin_small
@@ -40,6 +40,7 @@ hidden_dim: 256
 dropout: 0.1
 nheads: 8
 num_queries: 1024
+points_per_path: 2
 dec_n_points: 8
 enc_n_points: 8
 
@@ -62,14 +63,10 @@ frozen_weights: null
 
 # Dataset parameters
 rule: overlap_10_0.6
-dataset_file: sk1491
-datafile_mid: ""
-npt: 2
 data_root: "data"
-coco_panoptic_path: ""
-remove_difficult: false
-train_split: "data/WH-SYMMAX/train/train_im_pair.lst"
-val_split: "data/WH-SYMMAX/test/test_im_pair.lst"
+train_split: "data/sk1491/train/train_pair.lst"
+test_split: "data/sk1491/test/test_pair.lst"
+random_rotate: False
 
 # Visualization parameters
 visual_type: lines

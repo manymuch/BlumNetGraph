@@ -10,19 +10,12 @@ import pandas as pd
 import numpy as np
 import PIL.Image as Image
 from torch.utils.data import Dataset
-from preparation import decompose_skeleton
+from .decomposition import decompose_skeleton
 import datasets.sktransforms as T
 
 
-DATASET_OPTIONS = [
-    'sk1491', 'sk1491_mix', 'sk1491_stitch', 'sk506', 'SYMMAX300', 'SymPASCAL',
-    "animal2000",  "kimia216",  "tetrapod120", "mpeg7", "SwedishLeaves", "shapes-combine",
-    "em200", "WH-SYMMAX", 'SmithsonianLeaves',
-]
-
-
 class SkDataset(Dataset):
-    def __init__(self, fileNames, rootDir, transforms, base_size=512, npt=2, rule='overlap_10_0.6', data_name=None):
+    def __init__(self, fileNames, rootDir, transforms, base_size=512, npt=2, rule='overlap_10_0.6'):
         super(SkDataset, self).__init__()
         self.rootDir = rootDir
         self.frame = pd.read_csv(fileNames, dtype=str, delimiter=' ', header=None)
@@ -31,17 +24,13 @@ class SkDataset(Dataset):
         self.npt = npt
         self.rule = rule
         self.curve_length = eval(rule.split('_')[1])
-        self.data_name = data_name
+        self.dia_iters = 2
 
     def id2name(self, id):
         image_fpath = os.path.join(self.rootDir, self.frame.iloc[id, 0])
         ann_fpath = os.path.join(self.rootDir, self.frame.iloc[id, 1])
         return image_fpath, ann_fpath
 
-    def dia_iters(self):
-        data2diaiters = {'SmithsonianLeaves':2, 'sk1491':2, 'sk506':2,
-                         'SYMMAX300':3, 'SymPASCAL':2}
-        return data2diaiters.get(self.data_name, 2)
 
     def __len__(self):
         return len(self.frame)
@@ -50,23 +39,15 @@ class SkDataset(Dataset):
         while True:
             try:
                 image_fpath, ann_fpath = self.id2name(idx)
-                dia_iters = self.dia_iters()
                 areas_fpath = f"{ann_fpath[:-4]}_mask.png"
                 img, skeleton, sample = self.get_target(
                     image_fpath, ann_fpath, areas_fpath=areas_fpath, base_size=self.base_size,
-                    npt=self.npt, rule=self.rule, dil_iters=dia_iters)
+                    npt=self.npt, rule=self.rule, dil_iters=self.dia_iters)
                 break
             except:
                 # walk around a bug that SYMPASCAL has an image without skeleton curves
                 print(f"failure: {image_fpath, ann_fpath}")
                 idx = np.random.randint(len(self.frame))
-
-        if self.data_name == 'SmithsonianLeaves':
-            w, h = img.size
-            _im = np.array(img).astype(np.uint8)
-            nimg = 254 * np.ones_like(_im)
-            nimg[15:h - 15, 15:w - 15] = _im[15:h - 15, 15:w - 15]
-            img = Image.fromarray(nimg)
 
         sample.update({'id': idx, 'image': img, 'skeleton': skeleton})
         sample = self.transforms(sample)
@@ -110,9 +91,9 @@ class SkDataset(Dataset):
 
         fx = fy = base_size * 1.0 / max(w, h)
         sk_masks = [cv2.resize(sk, dsize=None, fx=fx, fy=fy, interpolation=cv2.INTER_LINEAR)
-            for sk in sk_masks]
+                    for sk in sk_masks]
 
-        target = {"orig_size": origin_size,} # "file_name": os.path.basename(image_fpath),
+        target = {"orig_size": origin_size, }  # "file_name": os.path.basename(image_fpath),
         target.update(
             decompose_skeleton(sk_masks, rule=rule, npt=npt, dil_iters=dil_iters))
 
@@ -120,7 +101,7 @@ class SkDataset(Dataset):
 
 
 class SkTestset(Dataset):
-    def __init__(self, fileNames, rootDir, transforms, base_size=512, npt=2, rule='overlap_10_0.6', data_name=None):
+    def __init__(self, fileNames, rootDir, transforms, base_size=512, npt=2, rule='overlap_10_0.6'):
         super(SkTestset, self).__init__()
         self.rootDir = rootDir
         self.frame = pd.read_csv(fileNames, dtype=str, delimiter=' ', header=None)
@@ -128,7 +109,6 @@ class SkTestset(Dataset):
         self.base_size = base_size
         self.npt = npt
         self.rule = rule
-        self.data_name = data_name
 
     def id2name(self, id):
         image_fpath = os.path.join(self.rootDir, self.frame.iloc[id, 0])
@@ -141,15 +121,9 @@ class SkTestset(Dataset):
     def __getitem__(self, idx):
         image_fpath, ann_fpath = self.id2name(idx)
         img = Image.open(image_fpath).convert("RGB")
-        if self.data_name == 'SmithsonianLeaves':
-            w, h = img.size
-            _im = np.array(img).astype(np.uint8)
-            nimg = 254 * np.ones_like(_im)
-            nimg[15:h - 15, 15:w - 15] = _im[15:h - 15, 15:w - 15]
-            img = Image.fromarray(nimg)
         skeleton = Image.fromarray(
             cv2.imread(ann_fpath, 0).astype(np.float32))
-        sample = {'id': idx, 'image': img, 'skeleton': skeleton, 'branches':[]}
+        sample = {'id': idx, 'image': img, 'skeleton': skeleton, 'branches': []}
         sample['orig_size'] = img.size
 
         if self.transforms is not None:
@@ -161,7 +135,7 @@ class SkTestset(Dataset):
 
 
 class SkInferset(Dataset):
-    def __init__(self, im_names, rootDir, transforms, base_size=512, npt=2, rule='overlap_10_0.6', data_name=None):
+    def __init__(self, im_names, rootDir, transforms, base_size=512, npt=2, rule='overlap_10_0.6'):
         super(SkInferset, self).__init__()
         self.rootDir = rootDir
         self.im_names = im_names
@@ -169,7 +143,6 @@ class SkInferset(Dataset):
         self.base_size = base_size
         self.npt = npt
         self.rule = rule
-        self.data_name = data_name
 
     def id2name(self, id):
         image_fpath = os.path.join(self.rootDir, self.im_names[id])
@@ -183,7 +156,7 @@ class SkInferset(Dataset):
         img = Image.open(image_fpath).convert("RGB")
         w, h = img.size
         skeleton = Image.fromarray(np.zeros((h, w), dtype=np.float32))
-        sample = {'id': idx, 'image': img, 'skeleton': skeleton, 'branches':[]}
+        sample = {'id': idx, 'image': img, 'skeleton': skeleton, 'branches': []}
         sample['orig_size'] = img.size
         if self.transforms is not None:
             sample = self.transforms(sample)
@@ -193,8 +166,7 @@ class SkInferset(Dataset):
         return img, tgt
 
 
-def make_skeleton_transforms(image_set, data_name):
-    assert data_name in DATASET_OPTIONS
+def make_skeleton_transforms(is_train, rotate):
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -204,45 +176,28 @@ def make_skeleton_transforms(image_set, data_name):
     trans1 = [T.RandomHorizontalFlip(), T.RandomVerticalFlip(), T.RandomRotate90(), T.RandomResize(train_scales)
               ]
     trans2 = [T.ColorJitter(), normalize]
-    non_random_rots = ['sk1491', 'sk1491_mix', 'sk1491_stitch', 'sk506', 'SYMMAX300', 'SymPASCAL', "em200", "WH-SYMMAX"]
-    random_rots = ['SmithsonianLeaves', "animal2000",  "kimia216",  "tetrapod120",  "mpeg7", "SwedishLeaves", "shapes-combine"]
-    train_transform_dict = {}
-    for data_i in non_random_rots:
-        train_transform_dict[data_i] = trans1 + trans2
-    for data_i in random_rots:
-        train_transform_dict[data_i] = trans1 + [T.RandomRotateAny(),] + trans2
 
-    if image_set == 'train':
-        return T.Compose(train_transform_dict[data_name])
+    if rotate:
+        train_transform = trans1 + [T.RandomRotateAny(),] + trans2
+    else:
+        train_transform = trans1 + trans2
 
-    if image_set in ['val', 'test', 'infer']:
+    if is_train:
+        return T.Compose(train_transform)
+    else:
         return T.Compose([
             T.RandomResize(test_scales),
             normalize,
         ])
 
-    raise ValueError(f'unknown {image_set}')
 
-
-def build(image_set, config):
-    assert config["dataset_file"] in DATASET_OPTIONS
-    if image_set == 'train':
-        fileNames = f'{config["data_root"]}/{config["dataset_file"]}/train/train{config["datafile_mid"]}_pair.lst'
-        _DATA_CLS = SkDataset
-    elif image_set == 'val':
-        fileNames = f'{config["data_root"]}/{config["dataset_file"]}/test/test{config["datafile_mid"]}_pair.lst'
-        _DATA_CLS = SkDataset
-    elif image_set == 'test':
-        fileNames = f'{config["data_root"]}/{config["dataset_file"]}/test/test{config["datafile_mid"]}_pair.lst'
-        _DATA_CLS = SkTestset
-    elif image_set == 'infer':
-        fileNames = os.listdir(f'{config["data_root"]}')
-        _DATA_CLS = SkInferset
+def build_dataset(config, is_train):
+    if is_train:
+        split_file = config["train_split"]
     else:
-        raise ValueError('')
-    dataset = _DATA_CLS(fileNames, config["data_root"],
-                        transforms=make_skeleton_transforms(image_set, config["dataset_file"]),
-                        data_name=config["dataset_file"],
-                        base_size=512, npt=config["npt"], rule=config["rule"])
+        split_file = config["test_split"]
+    dataset = SkDataset(split_file, config["data_root"],
+                        transforms=make_skeleton_transforms(is_train, config["random_rotate"]),
+                        base_size=512, npt=config["points_per_path"], rule=config["rule"])
     return dataset
 
