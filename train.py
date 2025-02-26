@@ -15,6 +15,7 @@ from datasets.data_prefetcher import collate_fn
 from torch.utils.data import DataLoader
 from criterion.skeleton_eval import SkeletonEvaluator
 import cv2
+import argparse
 
 
 def set_seed(seed):
@@ -61,18 +62,20 @@ class Trainer:
             lr=config.get("lr", 1e-4),
             weight_decay=config.get("weight_decay", 1e-4)
         )
-        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(
-            self.optimizer,
-            step_size=config.get("lr_drop", 20)
-        )
 
         # Setup data loaders
         train_dataset = build_dataset(is_train=True, config=config)
         test_dataset = build_dataset(is_train=False, config=config)
-        self.train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=False,
+        self.train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True,
                                        collate_fn=collate_fn, num_workers=config["num_workers"], pin_memory=True)
         self.test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False,
                                       collate_fn=collate_fn, num_workers=config["num_workers"], pin_memory=True)
+        self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.optimizer,
+            T_0=config["t_0"],
+            T_mult=config["t_mult"],
+            eta_min=config["lr"] * 0.01
+        )
 
     def train_one_epoch(self, use_wandb):
         self.model.train()
@@ -93,6 +96,7 @@ class Trainer:
             self.optimizer.step()
             total_loss += loss.item()
         avg_loss = total_loss / len(self.train_loader)
+        self.lr_scheduler.step()
         return avg_loss
 
     def validate(self, use_wandb):
@@ -134,7 +138,7 @@ class Trainer:
                     vis_combined = cv2.cvtColor(vis_combined, cv2.COLOR_BGR2RGB)
                     val_images.append(wandb.Image(vis_combined, caption=f"{inputName}"))
 
-        metrics = sk_evaluator.summarize_cum(score_threshold=score_threshold, offset_threshold=0.01)
+        metrics = sk_evaluator.summarize(score_threshold=score_threshold, offset_threshold=0.01)
         results = {
             "val_images": val_images,
             "val_f1_cnt": metrics.get('cnt_f1', 0),
@@ -150,11 +154,15 @@ class Trainer:
             'epoch': epoch,
             'config': self.config,
         }
-        torch.save(checkpoint, os.path.join(self.output_dir, f'checkpoint_{epoch}.pth'))
+        wandb_name = self.config["wandb"]["name"]
+        torch.save(checkpoint, os.path.join(self.output_dir, f'{wandb_name}_checkpoint_{epoch}.pth'))
 
 
 def main():
-    config_path = "config/default.yaml"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="config/default.yaml")
+    args = parser.parse_args()
+    config_path = args.config
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
@@ -175,9 +183,7 @@ def main():
         wandb.log({"train_loss": train_loss}, step=epoch)
         print(f"Trained [{epoch}/{config['epochs']}] epoches, loss: {train_loss:.4f}")
 
-        trainer.lr_scheduler.step()
-
-        if epoch % config["eval_epochs"] == 0:
+        if epoch % config["eval_epochs"] == 0 or epoch == config["epochs"] - 1:
             print(f"Validating at [{epoch}/{config['epochs']}] epoches...")
             results = trainer.validate(use_wandb)
             wandb.log(results, step=epoch)

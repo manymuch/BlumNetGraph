@@ -16,13 +16,13 @@ lr_linear_proj_mult: 0.1
 weight_decay: 0.0001
 lr_drop: 160
 clip_max_norm: 0.1
-
 # Training parameters
 batch_size: 1
-epochs: 200
+epochs: 40
 num_workers: 2
-eval_epochs: 10
-
+eval_epochs: 8
+t_0: 41
+t_mult: 2
 # Backbone parameters
 backbone: swin_small
 dilation: false
