@@ -45,16 +45,11 @@ class SkDataset(Dataset):
         sample = self.transforms(sample)
 
         branches = sample.pop('branches')
-        if len(branches) > 0:
-            sample['curves'] = torch.cat([b['curves'] for b in branches], dim=0)
-            sample['cids'] = torch.cat([b['cids'] for b in branches], dim=0)
-            sample['clabels'] = torch.cat([b['clabels'] for b in branches], dim=0)
-        else:
-            sample['curves'] = torch.zeros(size=(0, self.npt, 2), dtype=torch.float32)
-            sample['cids'] = torch.zeros(size=(0, ), dtype=torch.long)
-            sample['clabels'] = torch.zeros(size=(0, ), dtype=torch.long)
-        if 'key_pts' in sample:
-            sample['key_pts'] = sample['key_pts'][:, None, :]
+        sample['curves'] = torch.cat([b['curves'] for b in branches], dim=0)
+        sample['cids'] = torch.cat([b['cids'] for b in branches], dim=0)
+        sample['clabels'] = torch.cat([b['clabels'] for b in branches], dim=0)
+        sample['key_pts'] = sample['key_pts'][:, None, :]
+        sample["keypoint_directions"] = sample["keypoint_directions"][:, None, :]
         img = sample.pop('image')
         tgt = sample
         return img, tgt

@@ -48,17 +48,17 @@ enc_n_points: 8
 out_pts: 128
 aux_loss: false
 
-# Matcher parameters
-set_cost_class: 1
-set_cost_bbox: 5
-cls_loss_coef: 1
-bbox_loss_coef: 5
+# Matcher and loss parameters
+matcher_class_weight: 1
+matcher_regression_weight: 5
+focal_ce_cost: False
+loss_class_weight: 1
+loss_regression_weight: 5
+loss_keypoint_weight: 0.1
+loss_curve_weight: 1
 focal_alpha: 0.25
-pts_loss_coef: 1
 
-# Using the same num_queries as transformer
 with_box_refine: false
-frozen_weights: null
 
 # Dataset parameters
 rule: overlap_10_0.6
@@ -66,6 +66,3 @@ data_root: "data"
 train_split: "data/sk1491/train/train_pair.lst"
 test_split: "data/sk1491/test/test_pair.lst"
 random_rotate: False
-
-# Visualization parameters
-visual_type: lines

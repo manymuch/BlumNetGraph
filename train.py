@@ -86,9 +86,7 @@ class Trainer:
             targets = [{k: v.to(self.device) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
             self.optimizer.zero_grad()
             outputs = self.model(images)
-            loss_dict = self.criterion(outputs, targets)
-            weight_dict = self.criterion.weight_dict
-            loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+            loss = self.criterion(outputs, targets)
             progress_bar.set_description(f"Loss: {loss.item():.4f}")
             loss.backward()
             if self.config["clip_max_norm"] > 0:
@@ -122,7 +120,7 @@ class Trainer:
                 assert batch_size == 1
 
                 pred = results_dict['curves'][0]
-                ptspred = results_dict['pts'][0]
+                ptspred = results_dict['keypoints'][0]
 
                 _, pred_mask = self.postprocessor.visualise_curves(pred, 0.65, np.zeros((h, w, 3), dtype=np.uint8))
                 sk_evaluator.update([(gt_skeleton, pred_mask, inputName)])

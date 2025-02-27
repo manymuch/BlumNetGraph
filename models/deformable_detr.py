@@ -44,16 +44,15 @@ class DeformableDETR(nn.Module):
         self.num_queries = num_queries
         self.transformer = transformer
         hidden_dim = transformer.d_model
-        self.class_embed = nn.Linear(hidden_dim, num_classes)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 2 * cpts, 3)
+        self.curve_class_embed = nn.Linear(hidden_dim, num_classes)
+        self.curve_points_embed = MLP(hidden_dim, hidden_dim, 2 * cpts, 3)
         self.num_feature_levels = num_feature_levels
         # for graph prediction
         assert out_pts >= 0
         self.out_pts = out_pts
         pts_class = 3  # 0-endpts, 1-junctions, 2-nontarget
-        if out_pts > 0:
-            self.class_pt_embed = nn.Linear(hidden_dim, pts_class)
-            self.pt_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+        self.keypoint_class_embed = nn.Linear(hidden_dim, pts_class)
+        self.keypoint_point_direction_embed = MLP(hidden_dim, hidden_dim, 2, 3)
         self.query_embed = nn.Embedding(num_queries + out_pts, hidden_dim*2)
         if num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
@@ -83,30 +82,28 @@ class DeformableDETR(nn.Module):
 
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
-        self.class_embed.bias.data = torch.ones(num_classes) * bias_value
-        nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
-        nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
+        self.curve_class_embed.bias.data = torch.ones(num_classes) * bias_value
+        nn.init.constant_(self.curve_points_embed.layers[-1].weight.data, 0)
+        nn.init.constant_(self.curve_points_embed.layers[-1].bias.data, 0)
         for proj in self.input_proj:
             nn.init.xavier_uniform_(proj[0].weight, gain=1)
             nn.init.constant_(proj[0].bias, 0)
-        if out_pts > 0:
-            self.class_pt_embed.bias.data = torch.ones(pts_class) * bias_value
-            nn.init.constant_(self.pt_embed.layers[-1].weight.data, 0)
-            nn.init.constant_(self.pt_embed.layers[-1].bias.data, 0)
+        self.keypoint_class_embed.bias.data = torch.ones(pts_class) * bias_value
+        nn.init.constant_(self.keypoint_point_direction_embed.layers[-1].weight.data, 0)
+        nn.init.constant_(self.keypoint_point_direction_embed.layers[-1].bias.data, 0)
         num_pred = transformer.decoder.num_layers
         if with_box_refine:
-            self.class_embed = _get_clones(self.class_embed, num_pred)
-            self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
-            nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
+            self.curve_class_embed = _get_clones(self.curve_class_embed, num_pred)
+            self.curve_points_embed = _get_clones(self.curve_points_embed, num_pred)
+            nn.init.constant_(self.curve_points_embed[0].layers[-1].bias.data[2:], -2.0)
             # hack implementation for iterative bounding box refinement
-            self.transformer.decoder.bbox_embed = self.bbox_embed
+            self.transformer.decoder.bbox_embed = self.curve_points_embed
         else:
-            nn.init.constant_(self.bbox_embed.layers[-1].bias.data[2:], -2.0)
-            self.class_embed = nn.ModuleList([self.class_embed for _ in range(num_pred)])
-            self.bbox_embed = nn.ModuleList([self.bbox_embed for _ in range(num_pred)])
-            if out_pts > 0:
-                self.class_pt_embed = nn.ModuleList([self.class_pt_embed for _ in range(num_pred)])
-                self.pt_embed = nn.ModuleList([self.pt_embed for _ in range(num_pred)])
+            nn.init.constant_(self.curve_points_embed.layers[-1].bias.data[2:], -2.0)
+            self.curve_class_embed = nn.ModuleList([self.curve_class_embed for _ in range(num_pred)])
+            self.curve_points_embed = nn.ModuleList([self.curve_points_embed for _ in range(num_pred)])
+            self.keypoint_class_embed = nn.ModuleList([self.keypoint_class_embed for _ in range(num_pred)])
+            self.keypoint_point_direction_embed = nn.ModuleList([self.keypoint_point_direction_embed for _ in range(num_pred)])
             self.transformer.decoder.bbox_embed = None
 
     def forward(self, samples: NestedTensor):
@@ -124,8 +121,6 @@ class DeformableDETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        if not isinstance(samples, NestedTensor):
-            samples = nested_tensor_from_tensor_list(samples)
         features, pos = self.backbone(samples)
 
         srcs = []
@@ -155,14 +150,13 @@ class DeformableDETR(nn.Module):
         hs, init_reference, inter_references = (
             hs[:, :, self.out_pts:], init_reference[:, self.out_pts:], inter_references[:, :, self.out_pts:])
 
-        rst = {}
-        rst['curves'] = self._forward(
-            hs, init_reference, inter_references, class_embed=self.class_embed, bbox_embed=self.bbox_embed)
-        if self.out_pts > 0:
-            rst['pts'] = self._forward(
-                pts_hs, pts_init_refer, pts_inter_refer, class_embed=self.class_pt_embed, bbox_embed=self.pt_embed)
+        results = {}
+        results['curves'] = self._forward(
+            hs, init_reference, inter_references, class_embed=self.curve_class_embed, bbox_embed=self.curve_points_embed)
+        results['keypoints'] = self._forward(
+            pts_hs, pts_init_refer, pts_inter_refer, class_embed=self.keypoint_class_embed, bbox_embed=self.keypoint_point_direction_embed)
 
-        return rst
+        return results
 
     def _forward(self, hs, init_reference, inter_references, class_embed, bbox_embed, key_prefix=''):
         outputs_classes = []
@@ -186,7 +180,7 @@ class DeformableDETR(nn.Module):
             outputs_coords.append(outputs_coord)
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
-        out = {f'{key_prefix}pred_logits': outputs_class[-1], f'{key_prefix}pred_boxes': outputs_coord[-1]}
+        out = {f'{key_prefix}pred_logits': outputs_class[-1], f'{key_prefix}pred_points': outputs_coord[-1]}
         if self.aux_loss:
             out[f'{key_prefix}aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, key_prefix=key_prefix)
         return out
@@ -196,7 +190,7 @@ class DeformableDETR(nn.Module):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{f'{key_prefix}pred_logits': a, f'{key_prefix}pred_boxes': b}
+        return [{f'{key_prefix}pred_logits': a, f'{key_prefix}pred_points': b}
                 for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
 

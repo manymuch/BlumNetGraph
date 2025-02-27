@@ -67,7 +67,7 @@ class GetElements(nn.Module):
             nscores, npts, gids = scores[retained], pts[retained], gids[retained]
             return nscores, npts, gids
 
-        out_logits, out_boxes = outputs['pred_logits'], outputs['pred_boxes']
+        out_logits, out_boxes = outputs['pred_logits'], outputs['pred_points']
         assert out_logits.shape[0] == 1, 'batchsize != 1'
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
@@ -235,7 +235,7 @@ class PostProcess(nn.Module):
                     results[k] = self._forward_nongraph(outputs[k], target_sizes)
                 else:
                     results[k] = self._forward_curves(outputs[k], target_sizes)
-            elif k == 'pts':
+            elif k == 'keypoints':
                 results[k] = self._forward_pts(outputs[k], target_sizes)
             else:
                 raise NotImplementedError('')
@@ -349,7 +349,7 @@ class PostProcess(nn.Module):
         Return:
             results, list of dict, each dict is the predicted curves
         """
-        out_logits, out_line = outputs['pred_logits'], outputs['pred_boxes']
+        out_logits, out_line = outputs['pred_logits'], outputs['pred_points']
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
 
