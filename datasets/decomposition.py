@@ -418,67 +418,60 @@ def decompose_skeleton(sk_masks, rule='overlap_10_0.6', npt=2, dil_iters=2):
     """ Decompose skeleton mask and get the graph components: endpoints, junction points and lines.
     Args
         sk_masks: list, like [mask, ... ], mask has shape (h, w), representing a skeleton graph on image
+                 (now assumed to contain only one mask)
 
     Return:
-        target, dict, like bellow. An image has at least 1 skeleton graphs, graphs could be decomposed
-                into branches, each branch could be decomposed into overlapped curves (lines), each curve
-                has a graph id to distinguish its belonging graph, each curve has at least npt >= 2 points,
-                when npt=2 the curve is simplified into line. Two kinds of labels are provided for curve
-                detection: clabels and cids. Only one of them is used in detection. Here, clabels could
-                be 0 or 1, 0 represents a curve locates on skeleton branch, otherwise, clabels = 1. Here,
-                cids could be 0, 1, 2 and 3, 0 represents CONNECT_PT, 1 represents JUNCTION_PT, 2 represents
-                END_PT, 3 represents not on skeleton branch.
+        target, dict, like bellow. An image has a skeleton graph that can be decomposed
+                into branches, each branch can be decomposed into overlapped curves (lines).
+                Each curve has at least npt >= 2 points (when npt=2 the curve is simplified into line).
+                Two kinds of labels are provided for curve detection: clabels and cids.
+                Here, clabels is always 0, representing a curve located on skeleton branch.
+                cids could be 0, 1, 2: 0 represents CONNECT_PT, 1 represents JUNCTION_PT, 
+                2 represents END_PT.
                 {   "branches":[{
-                        "branch": branch, # tensor, points of current branch, shape=(1, N, 2)
                         "curves": curves, # tensor, lines decomposed from current branch, shape=(M, npt, 2)
                         "cids":   cids,   # tensor, label for each line, shape=(M, )
                         "clabels":clabel, # tensor, [0, 0, ...], shape=(M, )
-                        "gids":   gids,   # tensor, graph id for each object, shape=(M, )
                      }, ...]
-                    "key_pts": key_pts, # tensor, all junctions and endpoints, shape=(K, 1, 2)
+                    "key_pts": key_pts, # tensor, all junctions and endpoints, shape=(K, 2)
                     "plabels": plabels, # tensor, label for junctions and endpoints, shape=(K, )
-                                        #         (0 = JUNCTION_PT - 1, 1 = END_PT - 1)
-                    "pgids":   pgids,   # tensor, graph id for junctions and endpoints, shape=(K, )
+                                        # (0 = JUNCTION_PT - 1, 1 = END_PT - 1)
                 }
     """
+    # Assume sk_masks has only one element
     h, w = sk_masks[0].shape[:2]
-    num_masks = len(sk_masks)
     size = torch.as_tensor([w, h], dtype=torch.float32)
-    branches, key_pts, plabels, pgids = [], [], [], []
-    gid_gt = [_ / num_masks for _ in range(1, num_masks + 1)]
-    random.shuffle(gid_gt)
-    for gid, graph_mask in enumerate(sk_masks):
-        sk_mask_i = (graph_mask > 0).astype(np.uint8)
-        sk_mask_i = cv2.dilate(sk_mask_i, kernel=DIL_KERNER, iterations=dil_iters)
-        sk_mask_i = morphology.skeletonize(sk_mask_i, method='lee').astype(np.uint8)
-        branches_i = split_skeleton(sk_mask_i)
-        side_pts_type, endpts, juncpts = is_junction_of_branch_sides(
-            branches_i, edpt_type=END_PT, junc_type=JUNCTION_PT)
-        _key_pts = torch.as_tensor(endpts + juncpts, dtype=torch.float32) / size
-        _plabels = [END_PT] * len(endpts) + [JUNCTION_PT] * len(juncpts)
-        _plabels = -1 + torch.as_tensor(_plabels, dtype=torch.long)
-        _pgids = gid_gt[gid] * torch.ones_like(_plabels, dtype=torch.float32)
-        key_pts.append(_key_pts)
-        plabels.append(_plabels)
-        pgids.append(_pgids)
-        for bid, branch_pts in enumerate(branches_i):
-            branch_ann = create_ann_per_branch(branch_pts, side_pts_type[bid], npt, rule=rule)
-            if len(branch_ann) == 0:
-                continue
-            M = len(branch_ann['curves'])
-            branches.append({
-                #"branch": torch.as_tensor(branch_ann['branch']) / size,     # shape = (1, N, 2)
-                "curves": torch.as_tensor(branch_ann['curves']) / size,     # shape = (M, npt, 2)
-                "cids": torch.as_tensor(branch_ann['cids']),                # shape = (M, )
-                "clabels": torch.zeros(size=(M,), dtype=torch.long),        # shape = (M, )
-                "gids": gid_gt[gid] * torch.ones(size=(M,), dtype=torch.float32) # shape = (M, )
-            })
+    branches, key_pts, plabels = [], [], []
+    
+    # Process the single skeleton mask
+    graph_mask = sk_masks[0]
+    sk_mask_i = (graph_mask > 0).astype(np.uint8)
+    sk_mask_i = cv2.dilate(sk_mask_i, kernel=DIL_KERNER, iterations=dil_iters)
+    sk_mask_i = morphology.skeletonize(sk_mask_i, method='lee').astype(np.uint8)
+    branches_i = split_skeleton(sk_mask_i)
+    side_pts_type, endpts, juncpts = is_junction_of_branch_sides(
+        branches_i, edpt_type=END_PT, junc_type=JUNCTION_PT)
+    _key_pts = torch.as_tensor(endpts + juncpts, dtype=torch.float32) / size
+    _plabels = [END_PT] * len(endpts) + [JUNCTION_PT] * len(juncpts)
+    _plabels = -1 + torch.as_tensor(_plabels, dtype=torch.long)
+    key_pts.append(_key_pts)
+    plabels.append(_plabels)
+    
+    for bid, branch_pts in enumerate(branches_i):
+        branch_ann = create_ann_per_branch(branch_pts, side_pts_type[bid], npt, rule=rule)
+        if len(branch_ann) == 0:
+            continue
+        M = len(branch_ann['curves'])
+        branches.append({
+            "curves": torch.as_tensor(branch_ann['curves']) / size,     # shape = (M, npt, 2)
+            "cids": torch.as_tensor(branch_ann['cids']),                # shape = (M, )
+            "clabels": torch.zeros(size=(M,), dtype=torch.long),        # shape = (M, )
+        })
 
     target = {
         "branches": branches,
-        "key_pts": torch.cat(key_pts, dim=0),              # shape = (K, 2)
-        "plabels": torch.cat(plabels, dim=0),              # shape = (K, )
-        "pgids":   torch.cat(pgids, dim=0),                # shape = (K, )
+        "key_pts": torch.cat(key_pts, dim=0),  # shape = (K, 2)
+        "plabels": torch.cat(plabels, dim=0),  # shape = (K, )
     }
 
     return target

@@ -31,23 +31,15 @@ class SkDataset(Dataset):
         ann_fpath = os.path.join(self.rootDir, self.frame.iloc[id, 1])
         return image_fpath, ann_fpath
 
-
     def __len__(self):
         return len(self.frame)
 
     def __getitem__(self, idx):
-        while True:
-            try:
-                image_fpath, ann_fpath = self.id2name(idx)
-                areas_fpath = f"{ann_fpath[:-4]}_mask.png"
-                img, skeleton, sample = self.get_target(
-                    image_fpath, ann_fpath, areas_fpath=areas_fpath, base_size=self.base_size,
-                    npt=self.npt, rule=self.rule, dil_iters=self.dia_iters)
-                break
-            except:
-                # walk around a bug that SYMPASCAL has an image without skeleton curves
-                print(f"failure: {image_fpath, ann_fpath}")
-                idx = np.random.randint(len(self.frame))
+        image_fpath, ann_fpath = self.id2name(idx)
+        areas_fpath = f"{ann_fpath[:-4]}_mask.png"
+        img, skeleton, sample = self.get_target(
+            image_fpath, ann_fpath, areas_fpath=areas_fpath, base_size=self.base_size,
+            npt=self.npt, rule=self.rule, dil_iters=self.dia_iters)
 
         sample.update({'id': idx, 'image': img, 'skeleton': skeleton})
         sample = self.transforms(sample)
@@ -57,12 +49,10 @@ class SkDataset(Dataset):
             sample['curves'] = torch.cat([b['curves'] for b in branches], dim=0)
             sample['cids'] = torch.cat([b['cids'] for b in branches], dim=0)
             sample['clabels'] = torch.cat([b['clabels'] for b in branches], dim=0)
-            sample['gids'] = torch.cat([b['gids'] for b in branches], dim=0)
         else:
             sample['curves'] = torch.zeros(size=(0, self.npt, 2), dtype=torch.float32)
             sample['cids'] = torch.zeros(size=(0, ), dtype=torch.long)
             sample['clabels'] = torch.zeros(size=(0, ), dtype=torch.long)
-            sample['gids'] = torch.zeros(size=(0, ), dtype=torch.long)
         if 'key_pts' in sample:
             sample['key_pts'] = sample['key_pts'][:, None, :]
         img = sample.pop('image')

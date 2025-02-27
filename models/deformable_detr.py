@@ -27,7 +27,7 @@ class DeformableDETR(nn.Module):
     """ This is the Deformable DETR module that performs object detection """
 
     def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels,
-                 aux_loss=True, with_box_refine=False, cpts=1, gid=True, out_pts=0):
+                 aux_loss=True, with_box_refine=False, cpts=1, out_pts=0):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -48,8 +48,6 @@ class DeformableDETR(nn.Module):
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 2 * cpts, 3)
         self.num_feature_levels = num_feature_levels
         # for graph prediction
-        self.gid = gid
-        self.gid_embed = nn.Linear(hidden_dim, 1) if gid else None
         assert out_pts >= 0
         self.out_pts = out_pts
         pts_class = 3  # 0-endpts, 1-junctions, 2-nontarget
@@ -109,8 +107,6 @@ class DeformableDETR(nn.Module):
             if out_pts > 0:
                 self.class_pt_embed = nn.ModuleList([self.class_pt_embed for _ in range(num_pred)])
                 self.pt_embed = nn.ModuleList([self.pt_embed for _ in range(num_pred)])
-            if self.gid:
-                self.gid_embed = nn.ModuleList([self.gid_embed for _ in range(num_pred)])
             self.transformer.decoder.bbox_embed = None
 
     def forward(self, samples: NestedTensor):
@@ -171,7 +167,6 @@ class DeformableDETR(nn.Module):
     def _forward(self, hs, init_reference, inter_references, class_embed, bbox_embed, key_prefix=''):
         outputs_classes = []
         outputs_coords = []
-        outputs_gids = []
         for lvl in range(hs.shape[0]):
             if lvl == 0:
                 reference = init_reference
@@ -179,7 +174,6 @@ class DeformableDETR(nn.Module):
                 reference = inter_references[lvl - 1]
             reference = inverse_sigmoid(reference)
             outputs_class = class_embed[lvl](hs[lvl])
-            outputs_gid = self.gid_embed[lvl](hs[lvl]) if self.gid else None
             tmp = bbox_embed[lvl](hs[lvl])
             if reference.shape[-1] == 4:
                 tmp += reference
@@ -190,28 +184,20 @@ class DeformableDETR(nn.Module):
             outputs_coord = tmp.sigmoid()
             outputs_classes.append(outputs_class)
             outputs_coords.append(outputs_coord)
-            outputs_gids.append(outputs_gid)
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
-        outputs_gid = torch.stack(outputs_gids) if self.gid else None
         out = {f'{key_prefix}pred_logits': outputs_class[-1], f'{key_prefix}pred_boxes': outputs_coord[-1]}
-        if self.gid:
-            out[f'{key_prefix}pred_gids'] = outputs_gid[-1]
         if self.aux_loss:
-            out[f'{key_prefix}aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, outputs_gid, key_prefix=key_prefix)
+            out[f'{key_prefix}aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, key_prefix=key_prefix)
         return out
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_gid=None, key_prefix=''):
+    def _set_aux_loss(self, outputs_class, outputs_coord, key_prefix=''):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        if outputs_gid is None:
-            return [{f'{key_prefix}pred_logits': a, f'{key_prefix}pred_boxes': b}
-                    for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
-        else:
-            return [{f'{key_prefix}pred_logits': a, f'{key_prefix}pred_boxes': b, f'{key_prefix}pred_gids': c}
-                    for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_gid[:-1])]
+        return [{f'{key_prefix}pred_logits': a, f'{key_prefix}pred_boxes': b}
+                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
 
 class MLP(nn.Module):
@@ -239,13 +225,12 @@ def build_model(config, device):
         backbone,
         transformer,
         num_classes=num_classes,
-        num_queries=config.get("num_queries", 1024),
-        num_feature_levels=config.get("num_feature_levels", 4),
-        aux_loss=config.get("aux_loss", False),
-        with_box_refine=config.get("with_box_refine", False),
-        cpts=config.get("npt", 2),
-        gid=config.get("gid", False),
-        out_pts=config.get("out_pts", 0),
+        num_queries=config["num_queries"],
+        num_feature_levels=config["num_feature_levels"],
+        aux_loss=config["aux_loss"],
+        with_box_refine=config["with_box_refine"],
+        cpts=config["points_per_path"],
+        out_pts=config["out_pts"],
     )
     model.to(device)
     return model

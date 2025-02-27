@@ -46,7 +46,6 @@ enc_n_points: 8
 
 # Output parameters
 out_pts: 128
-gid: false
 aux_loss: false
 
 # Matcher parameters

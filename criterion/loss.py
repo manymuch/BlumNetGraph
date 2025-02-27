@@ -157,44 +157,6 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
     return loss.mean(1).sum() / num_boxes
 
 
-class GraphIDLoss(nn.Module):
-    """A simple graph id loss which also works like the Associative Embedding loss. 
-    We use this loss only for fast trying. 
-    """
-
-    def __init__(self):
-        super().__init__()
-
-    def singleTagLoss(self, pred_tag, gt_tag):
-        """Associative embedding loss for one image.
-
-        Args:
-            pred_tag (torch.Tensor[N,]): tag channels of output.
-            gt_tags (torch.Tensor[N,]): tag channels of gt.
-        """
-        l2_regress = F.mse_loss(pred_tag, gt_tag)
-        exp_regress = torch.mean(torch.exp((pred_tag - gt_tag).pow(2))) / pred_tag.shape[0]
-        gid_loss = l2_regress + exp_regress
-        return gid_loss
-
-    def forward(self, tags, gt_tags):
-        """Accumulate the tag loss for each image in the batch.
-
-        Note:
-            batch_size: B
-
-        Args:
-            pred_tags (torch.Tensor[BxN]): tag channels of output.
-            gt_tags (torch.Tensor[BxN]): tag channels of gt.
-        """
-        gid_losses = []
-        batch_size = tags.size(0)
-        for i in range(batch_size):
-            gid_loss = self.singleTagLoss(tags[i], gt_tags[i])
-            gid_losses.append(gid_loss)
-
-        return [torch.stack(gid_losses)]
-
 
 class SetCriterion(nn.Module):
     """ This class computes the loss for DETR.
@@ -203,7 +165,7 @@ class SetCriterion(nn.Module):
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
 
-    def __init__(self, matcher, weight_dict, losses, gt_pts_key, gt_pts_label, focal_alpha=0.25, gid_label=None):
+    def __init__(self, matcher, weight_dict, losses, gt_pts_key, gt_pts_label, focal_alpha=0.25):
         """ Create the criterion.
         Parameters:
             matcher: module able to compute a matching between targets and proposals
@@ -218,8 +180,6 @@ class SetCriterion(nn.Module):
         self.focal_alpha = focal_alpha
         self.gt_pts_key = gt_pts_key
         self.gt_pts_label = gt_pts_label
-        self.gid_label = gid_label
-        self.ae_loss_fun = GraphIDLoss()  # AELoss()
 
     def loss_labels(self, outputs, targets, indices, num_boxes, gt_pts_key, gt_pts_label):
         """Classification loss (NLL)
@@ -255,19 +215,6 @@ class SetCriterion(nn.Module):
         losses = {'loss_bbox': loss_bbox}
         return losses
 
-    def loss_gid_regress(self, outputs, targets, indices, num_boxes, gt_pts_key, gt_pts_label):
-        assert 'pred_gids' in outputs
-        src_logits = outputs['pred_gids'].squeeze(dim=2)
-        unmatched_gid = 0
-        idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t[gt_pts_label][J] for t, (_, J) in zip(targets, indices)])
-        target_classes = torch.full(src_logits.shape, unmatched_gid, dtype=torch.float32, device=src_logits.device)
-        target_classes[idx] = target_classes_o
-        losses = {'loss_gid': 0}
-        for _loss in self.ae_loss_fun(src_logits, target_classes):
-            losses['loss_gid'] += torch.mean(_loss)
-        return losses
-
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -283,7 +230,6 @@ class SetCriterion(nn.Module):
     def get_loss(self, loss, outputs, targets, indices, num_boxes, gt_pts_key, gt_pts_label, **kwargs):
         loss_map = {
             'labels': self.loss_labels,
-            'gids': self.loss_gid_regress,
             'boxes': self.loss_boxes,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
@@ -332,9 +278,6 @@ class SetCriterion(nn.Module):
             kwargs = {}
             l_dict.update(self.get_loss(
                 loss, outputs_without_aux, targets, indices, num_boxes, gt_pts_key, gt_pts_label, **kwargs))
-        if self.gid_label is not None:
-            l_dict.update(self.get_loss(
-                'gids', outputs_without_aux, targets, indices, num_boxes, '', self.gid_label))
         losses.update(l_dict)
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
@@ -346,9 +289,6 @@ class SetCriterion(nn.Module):
                     kwargs = {} if (loss != 'labels') else {'log': True}
                     l_dict.update(self.get_loss(
                         loss, aux_outputs, targets, indices, num_boxes, gt_pts_key, gt_pts_label, **kwargs))
-                if self.gid_label is not None:
-                    l_dict.update(self.get_loss(
-                        'gids', outputs, targets, indices, num_boxes, '', self.gid_label))
                 losses.update({f"{k}_{i}": v for k, v in l_dict.items()})
 
         return losses
@@ -359,7 +299,6 @@ def build_criterion(config, device):
     weight_dict = {
         'loss_ce': config.get("cls_loss_coef", 1),
         'loss_bbox': config.get("bbox_loss_coef", 5),
-        'loss_gid': 0.5,
     }
     add_items = {}
     for k, v in weight_dict.items():
@@ -384,7 +323,6 @@ def build_criterion(config, device):
         losses=['labels', 'boxes'],
         gt_pts_key="curves",
         gt_pts_label='clabels',
-        gid_label=("gids" if config.get("gid", False) else None),  # graph id is not used for most datasets
         focal_alpha=config.get("focal_alpha", 0.25),
     )
     criterion.to(device)
