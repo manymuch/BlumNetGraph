@@ -12,27 +12,20 @@ from .rotate_any_angle import get_rotation_homo
 from PIL import Image
 
 
-branch_info = [
-    "curves", # "branch",
-]
-sk_info = [
-    'key_pts', #'skpts', 'points'
-]
+branch_key = 'curves'
+sk_key = 'key_pts'
+direction_key = 'keypoint_directions'
 
 def vhflip(sample, flip_fun, scl, bias):
     sample['image'] = flip_fun(sample['image'])
     sample['skeleton'] = flip_fun(sample['skeleton'])
-    for sk_key in sk_info:
-        if sk_key in sample:
-            sample[sk_key] = sample[sk_key] * scl + bias
+    sample[sk_key] = sample[sk_key] * scl + bias
 
     for per_branch in sample['branches']:
-        for k in branch_info:
-            if k not in per_branch:
-                continue
-            _pts = per_branch[k]
-            per_branch[k] = _pts * scl + bias
+        _pts = per_branch[branch_key]
+        per_branch[branch_key] = _pts * scl + bias
 
+    sample[direction_key] = sample[direction_key] * scl
     return sample
 
 
@@ -61,24 +54,21 @@ def rotate_anly(sample, angle):
     affine_homo, (nw, nh) = get_rotation_homo(1, 1, angle=angle) # positive is clockwise
     sample['orig_size'] = sample['image'].size
 
-    for sk_key in sk_info:
-        if sk_key in sample:
-            skpts = sample[sk_key].numpy()
-            tmp_pts = np.ones((skpts.shape[0], 3), dtype=np.float32)
-            tmp_pts[:, :2] = tmp_pts[:, :2] * skpts
-            sample[sk_key] = torch.as_tensor(np.matmul(affine_homo, np.mat(tmp_pts).T).T.A)
+    skpts = sample[sk_key].numpy()
+    tmp_pts = np.ones((skpts.shape[0], 3), dtype=np.float32)
+    tmp_pts[:, :2] = tmp_pts[:, :2] * skpts
+    sample[sk_key] = torch.as_tensor(np.matmul(affine_homo, np.mat(tmp_pts).T).T.A)
 
     for per_branch in sample['branches']:
-        for k in branch_info:
-            if k not in per_branch:
-                continue
-            _pts = per_branch[k].numpy()
-            l, n, c = _pts.shape
+        _pts = per_branch[branch_key].numpy()
+        l, n, c = _pts.shape
 
-            pts = np.ones((l * n, 3), dtype=np.float32)
-            pts[:, :2] = _pts.reshape((l * n, 2)) * pts[:, :2]
-            pts = torch.as_tensor(np.matmul(affine_homo, np.mat(pts).T).T.A)
-            per_branch[k] = pts.reshape((l, n, c))
+        pts = np.ones((l * n, 3), dtype=np.float32)
+        pts[:, :2] = _pts.reshape((l * n, 2)) * pts[:, :2]
+        pts = torch.as_tensor(np.matmul(affine_homo, np.mat(pts).T).T.A)
+        per_branch[branch_key] = pts.reshape((l, n, c))
+
+    sample[direction_key] = sample[direction_key] @ affine_homo[:, :2]
 
     return sample
 
@@ -240,12 +230,9 @@ class Normalize(object):
         assert (h, w) == (ih, iw)
 
         # normalise points
-        for sk_key in sk_info:
-            if sk_key in sample:
-                sample[sk_key] = torch.clip(sample[sk_key], min=0.0, max=1.0)
+        sample[sk_key] = torch.clip(sample[sk_key], min=0.0, max=1.0)
         for per_branch in sample['branches']:
-            for k in branch_info:
-                per_branch[k] = torch.clip(per_branch[k], min=0.0, max=1.0)
+            per_branch[branch_key] = torch.clip(per_branch[branch_key], min=0.0, max=1.0)
 
         return sample
 

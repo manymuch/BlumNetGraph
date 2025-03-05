@@ -42,12 +42,11 @@ class GetElements(nn.Module):
                     junction/end points.
         """
 
-        def nms_pts(pts, scores, gids, dist_thresh=5):
+        def nms_pts(pts, scores, dist_thresh=5):
             """NMS on the predicted points
             Args:
                 pts: tensor of shape (num, 2), pixel scale
                 scores: tensor of shape (num,), float from 0. to 1.
-                gids: tensor of shape (num,), float.
             Return:
                 (npts, nscores), same format like the input.
             """
@@ -64,16 +63,13 @@ class GetElements(nn.Module):
                     if _nms_id > i:
                         retained[_nms_id] = 0
             retained = retained > 0
-            nscores, npts, gids = scores[retained], pts[retained], gids[retained]
-            return nscores, npts, gids
+            nscores, npts = scores[retained], pts[retained]
+            return nscores, npts
 
         out_logits, out_boxes = outputs['pred_logits'], outputs['pred_points']
         assert out_logits.shape[0] == 1, 'batchsize != 1'
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
-        out_gid = outputs.get(
-            'pred_gids', torch.ones_like(out_logits[..., 0:1]))
-        out_gids = out_gid.squeeze(dim=2)
 
         out_prob = F.softmax(out_logits, -1)  # (bs, num_query, num_class)
         out_scores, out_labels = out_prob.max(-1)
@@ -82,21 +78,27 @@ class GetElements(nn.Module):
         junpt_scores = out_prob[..., JUNCTION_PT - 1]
 
         out_pts, pred_boxes = [], []
-        for endpt_score, junpt_score, gids, pts, im_wh in zip(endpt_scores, junpt_scores, out_gids, out_boxes, target_sizes):
-            pd_pts_bsize = pts * im_wh
+        for endpt_score, junpt_score, pts, im_wh in zip(endpt_scores, junpt_scores, out_boxes, target_sizes):
+            key_pts = pts[:, :2]
+            key_pts_directions = pts[:, 2:] 
+            pd_pts_bsize = key_pts * im_wh
             pred_boxes.append(pd_pts_bsize)
             np_pts = pd_pts_bsize
             # filter
             endpt_ids = (endpt_score >= self.eval_pt_score)
             junct_ids = (junpt_score >= self.eval_pt_score)
 
-            endpt_score, endpts, endpt_gids = nms_pts(np_pts[endpt_ids], endpt_score[endpt_ids], gids[endpt_ids], dist_thresh=5)
-            junpt_score, juncpts, junpt_gids = nms_pts(np_pts[junct_ids], junpt_score[junct_ids], gids[junct_ids], dist_thresh=5)
+            endpt_score, endpts = nms_pts(np_pts[endpt_ids], endpt_score[endpt_ids], dist_thresh=5)
+            junpt_score, juncpts = nms_pts(np_pts[junct_ids], junpt_score[junct_ids], dist_thresh=5)
+            
+            # Get the corresponding directions for the filtered points
+            endpt_directions = key_pts_directions[endpt_ids][torch.where(endpt_score >= self.eval_pt_score)[0]]
+            junpt_directions = key_pts_directions[junct_ids][torch.where(junpt_score >= self.eval_pt_score)[0]]
 
             out_pts.append((
                 (np.round(endpts.cpu().detach().numpy()), np.round(juncpts.cpu().detach().numpy())),
                 (endpt_score.cpu().detach().numpy(), junpt_score.cpu().detach().numpy()),
-                (endpt_gids.cpu().detach().numpy(), junpt_gids.cpu().detach().numpy())
+                (endpt_directions.cpu().detach().numpy(), junpt_directions.cpu().detach().numpy())
             ))
         pred_boxes = torch.stack(pred_boxes, dim=0)
         return tgt_scores, out_labels, pred_boxes, out_pts
@@ -320,18 +322,23 @@ class PostProcess(nn.Module):
         h, w, _ = src_img.shape
         pred_mask = np.zeros((h, w), dtype=np.uint8)
 
-        (endpts, juncpts), (endpt_score, junpt_score), _ = pred['pts']
+        (endpts, juncpts), (endpt_score, junpt_score), (endpt_directions, junpt_directions) = pred['pts']
         endpts, juncpts = endpts.astype(np.int32), juncpts.astype(np.int32)
         endpts = endpts[endpt_score > eval_score].tolist()
         juncpts = juncpts[junpt_score > eval_score].tolist()
+        endpt_directions = endpt_directions[endpt_score > eval_score].tolist()
+        junpt_directions = junpt_directions[junpt_score > eval_score].tolist()
         img = np.copy(src_img).astype(np.uint8)
         for i in range(len(endpts)):
             cv2.circle(img, tuple(endpts[i]), radius=2, color=END_PT_COLOR, thickness=2)
             cv2.circle(pred_mask, tuple(endpts[i]), radius=2, color=255, thickness=2)
+            arrow_point = (np.array(endpts[i]) + np.array(endpt_directions[i]) * 10).astype(np.int32)
+            cv2.arrowedLine(img, tuple(endpts[i]), tuple(arrow_point), END_PT_COLOR, thickness=2)
         for i in range(len(juncpts)):
             cv2.circle(img, tuple(juncpts[i]), radius=2, color=JUNCTION_PT_COLOR, thickness=2)
             cv2.circle(pred_mask, tuple(juncpts[i]), radius=2, color=128, thickness=2)
-
+            arrow_point = (np.array(juncpts[i]) + np.array(junpt_directions[i]) * 10).astype(np.int32)
+            cv2.arrowedLine(img, tuple(juncpts[i]), tuple(arrow_point), JUNCTION_PT_COLOR, thickness=2)
         return img, pred_mask
 
     @torch.no_grad()
@@ -379,16 +386,9 @@ class PostProcess(nn.Module):
             results, list of dict, each dict is the predicted details of points
         """
         out_scores, out_labels, out_lines, out_pts = self.forward_elements(outputs, target_sizes, from_curves=False)
-        out_gid = outputs.get('pred_gids', None)
-        if out_gid is not None:
-            out_gids = out_gid.squeeze(dim=2)
-            results = [{'scores': s, 'labels': l, 'lines': b, 'gids': t, 'pts': pts}
-                       for s, l, b, t, pts in
-                       zip(out_scores, out_labels, out_lines, out_gids, out_pts)]
-        else:
-            results = [{'scores': s, 'labels': l, 'lines': b, 'pts': pts}
-                       for s, l, b, pts in
-                       zip(out_scores, out_labels, out_lines, out_pts)]
+        results = [{'scores': s, 'labels': l, 'lines': b, 'pts': pts}
+                    for s, l, b, pts in
+                    zip(out_scores, out_labels, out_lines, out_pts)]
 
         return results
 

@@ -25,6 +25,7 @@ class SetCriterion(nn.Module):
         self.matcher = matcher
         self.loss_class_weight = config["loss_class_weight"]
         self.loss_regression_weight = config["loss_regression_weight"]
+        self.loss_direction_weight = config["loss_direction_weight"]
         self.loss_keypoint_weight = config["loss_keypoint_weight"]
         self.loss_curve_weight = config["loss_curve_weight"]
         self.focal_alpha = config["focal_alpha"]
@@ -107,7 +108,8 @@ class SetCriterion(nn.Module):
         pred_keypoint_points = outputs['keypoints']['pred_points']
         gt_keypoint_class = [t["plabels"] for t in targets]
         gt_keypoint_points = [t["key_pts"] for t in targets]
-        keypoint_loss = self.forward_keypoints(pred_keypoint_class, pred_keypoint_points, gt_keypoint_class, gt_keypoint_points)
+        gt_keypoint_directions = [t["keypoint_directions"] for t in targets]
+        keypoint_loss = self.forward_keypoints(pred_keypoint_class, pred_keypoint_points, gt_keypoint_class, gt_keypoint_points, gt_keypoint_directions)
         loss = self.loss_curve_weight * curve_loss + self.loss_keypoint_weight * keypoint_loss
         return loss
 
@@ -129,21 +131,23 @@ class SetCriterion(nn.Module):
         loss = self.loss_class_weight * class_loss + self.loss_regression_weight * regression_loss
         return loss
 
-    def forward_keypoints(self, pred_class, pred_points, gt_class, gt_points):
+    def forward_keypoints(self, pred_class, pred_points, gt_class, gt_xy, gt_directions):
         """Compute loss for keypoint predictions."""
         device = pred_points.device
         
-
-        indices = self.matcher(pred_class, pred_points, gt_class, gt_points)
+        # only use x,y for matching, ignore direction
+        pred_xy = pred_points[:, :, :2]
+        pred_direction = pred_points[:, :, 2:]
+        indices = self.matcher(pred_class, pred_xy, gt_class, gt_xy)
 
         num_boxes = sum(len(labels) for labels in gt_class)
         num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=device)
         num_boxes = torch.clamp(num_boxes / 1, min=1).item()
 
         class_loss = self.loss_class(pred_class, gt_class, indices, num_boxes)
-        regression_loss = self.loss_regression(pred_points, gt_points, indices)
-
-        loss = self.loss_class_weight * class_loss + self.loss_regression_weight * regression_loss
+        regression_loss = self.loss_regression(pred_xy, gt_xy, indices)
+        direction_loss = self.loss_regression(pred_direction, gt_directions, indices)
+        loss = self.loss_class_weight * class_loss + self.loss_regression_weight * regression_loss + self.loss_direction_weight * direction_loss
         return loss
 
 

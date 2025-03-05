@@ -49,7 +49,7 @@ class SkDataset(Dataset):
         sample['cids'] = torch.cat([b['cids'] for b in branches], dim=0)
         sample['clabels'] = torch.cat([b['clabels'] for b in branches], dim=0)
         sample['key_pts'] = sample['key_pts'][:, None, :]
-        sample["keypoint_directions"] = sample["keypoint_directions"][:, None, :]
+        sample['keypoint_directions'] = sample['keypoint_directions'][:, None, :]
         img = sample.pop('image')
         tgt = sample
         return img, tgt
@@ -186,3 +186,67 @@ def build_dataset(config, is_train):
                         base_size=512, npt=config["points_per_path"], rule=config["rule"])
     return dataset
 
+
+def visualize_target(target):
+    canvas = (target["skeleton"].numpy()*255).astype(np.uint8)[0]
+    canvas = np.stack([canvas]*3, axis=2)
+
+    keypoints = target["key_pts"].numpy().squeeze(1)
+    keypoints_labels = target["plabels"].numpy()
+    keypoint_directions = target["keypoint_directions"].numpy().squeeze(1)
+
+    vis_result = visualize_keypoints(canvas, keypoints, keypoints_labels, keypoint_directions)
+    return vis_result
+
+
+def visualize_keypoints(canvas, keypoints, labels, directions):
+    h, w = canvas.shape[:2]
+    keypoints[:, 0] = keypoints[:, 0] * w
+    keypoints[:, 1] = keypoints[:, 1] * h
+    keypoints = keypoints.astype(np.int32)
+    for i in range(keypoints.shape[0]):
+        keypoint = keypoints[i]
+        label = labels[i]
+        keypoint_direction = directions[i]
+        if np.linalg.norm(keypoint_direction) < 0.5:
+            label = -1  # unsigned junction
+        keypoint_direction = (keypoint_direction * 20).astype(np.int32)
+        if label == 1:  # end point
+            cv2.circle(canvas, (keypoint[0], keypoint[1]), 5, (0, 255, 0), -1)
+            cv2.arrowedLine(canvas, (keypoint[0], keypoint[1]), (keypoint[0] + keypoint_direction[0], keypoint[1] + keypoint_direction[1]), (0, 255, 0), 2)
+        elif label == 0:  # junction point
+            cv2.circle(canvas, (keypoint[0], keypoint[1]), 5, (0, 0, 255), -1)
+            cv2.arrowedLine(canvas, (keypoint[0], keypoint[1]), (keypoint[0] + keypoint_direction[0], keypoint[1] + keypoint_direction[1]), (0, 0, 255), 2)
+        elif label == -1:  # unsigned junction
+            cv2.circle(canvas, (keypoint[0], keypoint[1]), 10, (0, 0, 255), -1)
+    return canvas
+
+
+def tensor_to_cv(tensor):
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+    tensor = tensor * std + mean
+    # Convert to numpy and transpose from (C,H,W) to (H,W,C)
+    tensor = tensor.numpy().transpose(1, 2, 0)
+    # Scale to 0-255 range and convert to uint8
+    tensor = (tensor * 255).clip(0, 255).astype(np.uint8)
+    # Convert from RGB to BGR for OpenCV
+    tensor = tensor[:, :, ::-1]
+    return tensor
+
+
+if __name__ == "__main__":
+    split_file = "data/sk1491/test/test_pair.lst"
+    root_dir = "data"
+    dataset = SkDataset(split_file, root_dir,
+                        transforms=make_skeleton_transforms(False, False),
+                        base_size=512, npt=2, rule='overlap_10_0.6')
+    data_length = len(dataset)
+    vis_root = "/home/jimzhang/Projects/BlumNetGraph/tmp/vis_graph"
+    from tqdm import tqdm
+    for i in tqdm(range(data_length)):
+        img, tgt = dataset[i]
+        img_cv = tensor_to_cv(img)
+        vis_target = visualize_target(tgt)
+        vis_combined = np.concatenate([img_cv, vis_target], axis=1)
+        cv2.imwrite(f"{vis_root}/target_{i}.png", vis_combined)

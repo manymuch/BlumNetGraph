@@ -52,7 +52,7 @@ class DeformableDETR(nn.Module):
         self.out_pts = out_pts
         pts_class = 3  # 0-endpts, 1-junctions, 2-nontarget
         self.keypoint_class_embed = nn.Linear(hidden_dim, pts_class)
-        self.keypoint_point_direction_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+        self.keypoint_point_direction_embed = MLP(hidden_dim, hidden_dim*2, 4, 6)  # 4: x, y, direction_x, direction_y
         self.query_embed = nn.Embedding(num_queries + out_pts, hidden_dim*2)
         if num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
@@ -154,11 +154,11 @@ class DeformableDETR(nn.Module):
         results['curves'] = self._forward(
             hs, init_reference, inter_references, class_embed=self.curve_class_embed, bbox_embed=self.curve_points_embed)
         results['keypoints'] = self._forward(
-            pts_hs, pts_init_refer, pts_inter_refer, class_embed=self.keypoint_class_embed, bbox_embed=self.keypoint_point_direction_embed)
+            pts_hs, pts_init_refer, pts_inter_refer, class_embed=self.keypoint_class_embed, bbox_embed=self.keypoint_point_direction_embed, direction=True)
 
         return results
 
-    def _forward(self, hs, init_reference, inter_references, class_embed, bbox_embed, key_prefix=''):
+    def _forward(self, hs, init_reference, inter_references, class_embed, bbox_embed, key_prefix='', direction=False):
         outputs_classes = []
         outputs_coords = []
         for lvl in range(hs.shape[0]):
@@ -175,7 +175,12 @@ class DeformableDETR(nn.Module):
                 assert reference.shape[-1] == 2
                 repeat_num = tmp.shape[-1] // reference.shape[-1]
                 tmp = tmp + torch.cat([reference for i in range(repeat_num)], dim=-1)
-            outputs_coord = tmp.sigmoid()
+            if direction:
+                outputs_coord_xy = tmp[:, :, :2].sigmoid()
+                outputs_coord_direction = tmp[:, :, 2:].sigmoid() * 2 - 1
+                outputs_coord = torch.cat([outputs_coord_xy, outputs_coord_direction], dim=-1)
+            else:
+                outputs_coord = tmp.sigmoid()
             outputs_classes.append(outputs_class)
             outputs_coords.append(outputs_coord)
         outputs_class = torch.stack(outputs_classes)

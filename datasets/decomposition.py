@@ -415,64 +415,180 @@ def create_ann_per_branch(branch_pts, side_type, npt, rule='overlap_10_0.6'):
 
 
 def decompose_skeleton(sk_masks, rule='overlap_10_0.6', npt=2, dil_iters=2):
-    """ Decompose skeleton mask and get the graph components: endpoints, junction points and lines.
-    Args
-        sk_masks: list, like [mask, ... ], mask has shape (h, w), representing a skeleton graph on image
-                 (now assumed to contain only one mask)
-
-    Return:
-        target, dict, like bellow. An image has a skeleton graph that can be decomposed
-                into branches, each branch can be decomposed into overlapped curves (lines).
-                Each curve has at least npt >= 2 points (when npt=2 the curve is simplified into line).
-                Two kinds of labels are provided for curve detection: clabels and cids.
-                Here, clabels is always 0, representing a curve located on skeleton branch.
-                cids could be 0, 1, 2: 0 represents CONNECT_PT, 1 represents JUNCTION_PT, 
-                2 represents END_PT.
-                {   "branches":[{
-                        "curves": curves, # tensor, lines decomposed from current branch, shape=(M, npt, 2)
-                        "cids":   cids,   # tensor, label for each line, shape=(M, )
-                        "clabels":clabel, # tensor, [0, 0, ...], shape=(M, )
-                     }, ...]
-                    "key_pts": key_pts, # tensor, all junctions and endpoints, shape=(K, 2)
-                    "plabels": plabels, # tensor, label for junctions and endpoints, shape=(K, )
-                                        # (0 = JUNCTION_PT - 1, 1 = END_PT - 1)
-                }
     """
-    # Assume sk_masks has only one element
+    Decompose skeleton mask and get the graph components: endpoints, junction points and lines.
+    
+    Args:
+        sk_masks: list of skeleton masks, expected to contain a single mask with shape (h, w)
+        rule: rule for curve decomposition
+        npt: number of points to represent a curve
+        dil_iters: number of dilation iterations
+        
+    Returns:
+        Dictionary containing branches, keypoints, and their attributes
+    """
+    # Ensure sk_masks contains only one element
+    assert len(sk_masks) == 1, "Function now assumes sk_masks contains only one element"
+    
     h, w = sk_masks[0].shape[:2]
     size = torch.as_tensor([w, h], dtype=torch.float32)
-    branches, key_pts, plabels = [], [], []
+    branches = []
+    keypoint_directions = []
     
     # Process the single skeleton mask
     graph_mask = sk_masks[0]
-    sk_mask_i = (graph_mask > 0).astype(np.uint8)
-    sk_mask_i = cv2.dilate(sk_mask_i, kernel=DIL_KERNER, iterations=dil_iters)
-    sk_mask_i = morphology.skeletonize(sk_mask_i, method='lee').astype(np.uint8)
-    branches_i = split_skeleton(sk_mask_i)
+    
+    # Preprocess skeleton
+    sk_mask = (graph_mask > 0).astype(np.uint8)
+    sk_mask = cv2.dilate(sk_mask, kernel=DIL_KERNER, iterations=dil_iters)
+    sk_mask = morphology.skeletonize(sk_mask, method='lee').astype(np.uint8)
+    
+    # Extract branches and keypoints
+    branches_i = split_skeleton(sk_mask)
     side_pts_type, endpts, juncpts = is_junction_of_branch_sides(
         branches_i, edpt_type=END_PT, junc_type=JUNCTION_PT)
-    _key_pts = torch.as_tensor(endpts + juncpts, dtype=torch.float32) / size
-    _plabels = [END_PT] * len(endpts) + [JUNCTION_PT] * len(juncpts)
-    _plabels = -1 + torch.as_tensor(_plabels, dtype=torch.long)
-    key_pts.append(_key_pts)
-    plabels.append(_plabels)
     
+    # Store branch data for direction calculation
+    branch_data = {}
+    
+    # Process each branch
     for bid, branch_pts in enumerate(branches_i):
+        # Store branch data
+        branch_data[bid] = {
+            'points': branch_pts,
+            'start': tuple(branch_pts[0]),
+            'end': tuple(branch_pts[-1]),
+            'start_type': side_pts_type[bid][0],
+            'end_type': side_pts_type[bid][1]
+        }
+        
+        # Process branch for curves
         branch_ann = create_ann_per_branch(branch_pts, side_pts_type[bid], npt, rule=rule)
         if len(branch_ann) == 0:
             continue
+            
         M = len(branch_ann['curves'])
         branches.append({
-            "curves": torch.as_tensor(branch_ann['curves']) / size,     # shape = (M, npt, 2)
-            "cids": torch.as_tensor(branch_ann['cids']),                # shape = (M, )
-            "clabels": torch.zeros(size=(M,), dtype=torch.long),        # shape = (M, )
+            "branch_id": bid,
+            "curves": torch.as_tensor(branch_ann['curves']) / size,
+            "cids": torch.as_tensor(branch_ann['cids']),
+            "clabels": torch.zeros(size=(M,), dtype=torch.long)
         })
-
+    
+    # Initialize keypoint to branch mapping
+    keypoint_to_branches = {}
+    
+    # Map endpoints to branches and mark branches as assigned
+    assigned_branches = set()
+    for endpoint in endpts:
+        endpoint_tuple = tuple(endpoint)
+        keypoint_to_branches[endpoint_tuple] = []
+        
+        for branch_id, data in branch_data.items():
+            # Check if branch connects to this endpoint
+            if (data['start_type'] == END_PT and np.linalg.norm(np.array(endpoint_tuple) - np.array(data['start'])) < 3) or \
+               (data['end_type'] == END_PT and np.linalg.norm(np.array(endpoint_tuple) - np.array(data['end'])) < 3):
+                keypoint_to_branches[endpoint_tuple].append(branch_id)
+                assigned_branches.add(branch_id)
+    
+    # Process junction points iteratively
+    remaining_branches = set(branch_data.keys()) - assigned_branches
+    unassigned_junctions = set(tuple(j) for j in juncpts)
+    
+    # Continue iterating until no more junctions can be assigned as "new endpoints"
+    while unassigned_junctions and remaining_branches:
+        # Find junctions that act as "new endpoints" for remaining branches
+        newly_assigned = False
+        
+        # Store temporary mappings for this iteration
+        junction_connections = {}
+        
+        # Check each unassigned junction against remaining branches
+        for junction in list(unassigned_junctions):
+            junction_connections[junction] = []
+            
+            for branch_id in remaining_branches:
+                data = branch_data[branch_id]
+                if (data['start_type'] == JUNCTION_PT and np.linalg.norm(np.array(junction) - np.array(data['start'])) < 3) or \
+                   (data['end_type'] == JUNCTION_PT and np.linalg.norm(np.array(junction) - np.array(data['end'])) < 3):
+                    junction_connections[junction].append(branch_id)
+            
+            # If junction connects to exactly one remaining branch, assign it as a "new endpoint"
+            if len(junction_connections[junction]) == 1:
+                branch_id = junction_connections[junction][0]
+                keypoint_to_branches[junction] = [branch_id]
+                assigned_branches.add(branch_id)
+                remaining_branches.remove(branch_id)
+                unassigned_junctions.remove(junction)
+                newly_assigned = True
+        
+        # If no new assignments were made, break the loop
+        if not newly_assigned:
+            break
+    
+    for junction in list(unassigned_junctions):
+            keypoint_to_branches[junction] = [-1]
+    
+    # Calculate directions from keypoints to branches
+    all_keypoints = endpts + juncpts
+    _key_pts = torch.as_tensor(all_keypoints, dtype=torch.float32) / size
+    
+    for keypoint in all_keypoints:
+        keypoint_tuple = tuple(keypoint)
+        keypoint_array = np.array(keypoint_tuple)
+        connected_branches = keypoint_to_branches.get(keypoint_tuple, [])
+        
+        # Filter out -1 branch IDs for direction calculation
+        valid_branches = [bid for bid in connected_branches if bid != -1]
+        
+        if valid_branches:
+            # Calculate directions to connected branches
+            directions = []
+            for branch_id in valid_branches:
+                branch_points = np.array(branch_data[branch_id]['points'])
+                # filter branch points within 10 pixels of keypoint
+                branch_points = branch_points[np.linalg.norm(branch_points - keypoint_array, axis=1) < 20]
+                # Calculate mean point of branch
+                mean_point = np.mean(branch_points, axis=0)
+                
+                # Calculate direction from keypoint to mean point
+                direction = mean_point - keypoint_array
+                norm = np.linalg.norm(direction)
+                
+                if norm > 0:
+                    direction = direction / norm  # Normalize
+                else:
+                    direction = np.array([0.0, 0.0])
+                
+                directions.append(direction)
+            
+            # Average the directions if there are multiple
+            if directions:
+                avg_direction = np.mean(directions, axis=0)
+                norm = np.linalg.norm(avg_direction)
+                if norm > 0:
+                    avg_direction = avg_direction / norm
+                keypoint_directions.append(avg_direction)
+            else:
+                keypoint_directions.append(np.array([0.0, 0.0]))
+        else:
+            # No valid connected branches
+            keypoint_directions.append(np.array([0.0, 0.0]))
+    
+    # Prepare keypoint labels
+    _plabels = [END_PT] * len(endpts) + [JUNCTION_PT] * len(juncpts)
+    _plabels = -1 + torch.as_tensor(_plabels, dtype=torch.long)
+    
+    # Convert keypoint directions to tensor
+    keypoint_directions = np.array(keypoint_directions, dtype=np.float32)
+    keypoint_directions = torch.from_numpy(keypoint_directions)
+    
+    # Assemble final target dictionary
     target = {
         "branches": branches,
-        "key_pts": torch.cat(key_pts, dim=0),  # shape = (K, 2)
-        "plabels": torch.cat(plabels, dim=0),  # shape = (K, )
+        "key_pts": _key_pts,
+        "plabels": _plabels,
+        "keypoint_directions": keypoint_directions,
     }
-
+    
     return target
-

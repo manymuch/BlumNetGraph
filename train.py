@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 from pathlib import Path
 from tqdm import tqdm
-from datasets.skeleton import build_dataset
+from datasets.skeleton import build_dataset, visualize_target
 from models.deformable_detr import build_model
 from criterion.loss import build_criterion
 from datasets.reconstruct_graph import PostProcess
@@ -131,8 +131,13 @@ class Trainer:
                     _raw_img = np.array(raw_img)[:, :, ::-1]
                     vis_img = np.copy(_raw_img)
                     vis_img, curves_mask = self.postprocessor.visualise_curves(pred, 0.65, vis_img, thinning=True, ch3mask=True, vmask=255)
-                    vis_img, pts_mask = self.postprocessor.visualise_pts(ptspred, 0.05, vis_img)
-                    vis_combined = np.concatenate((vis_img, curves_mask), axis=1).astype(np.uint8)
+                    pred_vis, pts_mask = self.postprocessor.visualise_pts(ptspred, 0.65, curves_mask)
+                    
+                    gt_vis = visualize_target(target)
+                    gt_vis = cv2.resize(gt_vis, (vis_img.shape[1], vis_img.shape[0]))
+                    
+                    # Concatenate original visualization with ground truth skeleton
+                    vis_combined = np.concatenate((vis_img, pred_vis, gt_vis), axis=1).astype(np.uint8)
                     vis_combined = cv2.cvtColor(vis_combined, cv2.COLOR_BGR2RGB)
                     val_images.append(wandb.Image(vis_combined, caption=f"{inputName}"))
 
@@ -173,6 +178,12 @@ def main():
     device = torch.device("cuda")
 
     model = build_model(config, device)
+    # Load checkpoint
+    if config["load_path"] and config["load_path"] != "pretrain":
+        checkpoint = torch.load(config["load_path"])
+        model.load_state_dict(checkpoint["model"])
+        print(f"Loaded checkpoint from {config['load_path']}.")
+
     criterion = build_criterion(config, device)
 
     trainer = Trainer(model, criterion, device, config)

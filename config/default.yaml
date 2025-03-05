@@ -54,6 +54,7 @@ matcher_regression_weight: 5
 focal_ce_cost: False
 loss_class_weight: 1
 loss_regression_weight: 5
+loss_direction_weight: 0.2
 loss_keypoint_weight: 0.1
 loss_curve_weight: 1
 focal_alpha: 0.25
