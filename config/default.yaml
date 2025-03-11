@@ -24,7 +24,7 @@ eval_epochs: 8
 t_0: 41
 t_mult: 2
 # Backbone parameters
-backbone: swin_small
+backbone: swin_base # swin_base, swin_small
 dilation: false
 position_embedding: sine
 position_embedding_scale: 6.283185307179586

@@ -629,7 +629,7 @@ class SwinTransformer(nn.Module):
 class SwinTransfomerNet(SwinTransformer):
     def __init__(self, name='swin_small'):
 
-        tiny_cfg = dict(#type='SwinTransformer',
+        tiny_cfg = dict(
             embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
             window_size=7, ape=False, drop_path_rate=0.2, patch_norm=True, use_checkpoint=False,
             mlp_ratio=4., qkv_bias=True, qk_scale=None,
@@ -638,13 +638,15 @@ class SwinTransfomerNet(SwinTransformer):
         base_cfg = {}
         base_cfg.update(tiny_cfg)
         base_cfg.update(dict(
+            pretrain_img_size=384,
             embed_dim=128, depths=[2, 2, 18, 2], num_heads=[4, 8, 16, 32],
-            window_size=7, ape=False, drop_path_rate=0.3, patch_norm=True, use_checkpoint=False
+            window_size=12, ape=False, drop_path_rate=0.3, patch_norm=True, use_checkpoint=False
         ))
 
         small_cfg = {}
         small_cfg.update(tiny_cfg)
         small_cfg.update(dict(
+            pretrain_img_size=224,
             embed_dim=96, depths=[2, 2, 18, 2], num_heads=[3, 6, 12, 24],
             window_size=7, ape=False, drop_path_rate=0.2, patch_norm=True, use_checkpoint=False
         ))

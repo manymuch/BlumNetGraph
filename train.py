@@ -131,7 +131,7 @@ class Trainer:
                     _raw_img = np.array(raw_img)[:, :, ::-1]
                     vis_img = np.copy(_raw_img)
                     vis_img, curves_mask = self.postprocessor.visualise_curves(pred, 0.65, vis_img, thinning=True, ch3mask=True, vmask=255)
-                    pred_vis, pts_mask = self.postprocessor.visualise_pts(ptspred, 0.65, curves_mask)
+                    pred_vis, pts_mask = self.postprocessor.visualise_pts(ptspred, 0.5, curves_mask)
                     
                     gt_vis = visualize_target(target)
                     gt_vis = cv2.resize(gt_vis, (vis_img.shape[1], vis_img.shape[0]))
