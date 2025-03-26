@@ -75,7 +75,7 @@ def evaluate(config, load_path, max_vis=100):
             pred = results_dict['curves'][0]
             ptspred = results_dict['keypoints'][0]
 
-            _, pred_mask = postprocessor.visualise_curves(pred, score_threshold, np.zeros((h, w, 3), dtype=np.uint8))
+            _, pred_mask = postprocessor.visualise_curves(pred, ptspred, score_threshold, np.zeros((h, w, 3), dtype=np.uint8))
 
             # Evaluate the current sample
             sample_metrics = sk_evaluator.evaluate_sample(gt_skeleton, pred_mask, offset_threshold)
@@ -120,8 +120,8 @@ def evaluate(config, load_path, max_vis=100):
         _raw_img = np.array(raw_img)[:, :, ::-1]  # Convert to BGR for cv2
         vis_img = np.copy(_raw_img)
         curve_score = 0.5
-        pts_score = 0.8
-        vis_img, curves_mask = postprocessor.visualise_curves(pred, curve_score, vis_img, thinning=True, ch3mask=True, vmask=255)
+        pts_score = 0.5
+        vis_img, curves_mask = postprocessor.visualise_curves(pred, ptspred, curve_score, vis_img, thinning=True, ch3mask=True, vmask=255)
         vis_img, pts_mask = postprocessor.visualise_pts(ptspred, pts_score, vis_img)
 
         gt_vis = cv2.imread(targetName, 0)

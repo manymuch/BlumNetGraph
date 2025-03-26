@@ -23,6 +23,60 @@ def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
+class CrossAttention(nn.Module):
+    def __init__(self, dim, context_dim, num_heads=8, dropout=0.1):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim ** -0.5
+        
+        self.q_proj = nn.Linear(dim, dim)
+        self.k_proj = nn.Linear(context_dim, dim)
+        self.v_proj = nn.Linear(context_dim, dim)
+        self.out_proj = nn.Linear(dim, dim)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, x, context):
+        # x: [num_layers, batch_size, num_queries, dim]
+        # context: [num_layers, batch_size, num_context_queries, dim]
+        
+        num_layers, batch_size, num_queries, dim = x.shape
+        _, _, num_context, _ = context.shape
+        
+        # Process each decoder layer separately
+        output_per_layer = []
+        for layer in range(num_layers):
+            x_layer = x[layer]  # [batch_size, num_queries, dim]
+            context_layer = context[layer]  # [batch_size, num_context, dim]
+            
+            # Project queries, keys, values
+            q = self.q_proj(x_layer).reshape(batch_size, num_queries, self.num_heads, dim // self.num_heads)
+            k = self.k_proj(context_layer).reshape(batch_size, num_context, self.num_heads, dim // self.num_heads)
+            v = self.v_proj(context_layer).reshape(batch_size, num_context, self.num_heads, dim // self.num_heads)
+            
+            # Transpose for attention
+            q = q.transpose(1, 2)  # [batch_size, num_heads, num_queries, head_dim]
+            k = k.transpose(1, 2)  # [batch_size, num_heads, num_context, head_dim]
+            v = v.transpose(1, 2)  # [batch_size, num_heads, num_context, head_dim]
+            
+            # Attention
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+            attn = attn.softmax(dim=-1)
+            attn = self.dropout(attn)
+            
+            # Get output
+            out = (attn @ v).transpose(1, 2).reshape(batch_size, num_queries, dim)
+            out = self.out_proj(out)
+            
+            # Residual connection
+            out = out + x_layer
+            
+            output_per_layer.append(out)
+        
+        # Stack all layer outputs
+        return torch.stack(output_per_layer)
+
+
 class DeformableDETR(nn.Module):
     """ This is the Deformable DETR module that performs object detection """
 
@@ -106,6 +160,20 @@ class DeformableDETR(nn.Module):
             self.keypoint_point_direction_embed = nn.ModuleList([self.keypoint_point_direction_embed for _ in range(num_pred)])
             self.transformer.decoder.bbox_embed = None
 
+        # Cross-attention modules for feature exchange
+        self.curve_keypoint_cross_attn = CrossAttention(hidden_dim, hidden_dim)
+        self.keypoint_curve_cross_attn = CrossAttention(hidden_dim, hidden_dim)
+
+        # Initialize cross-attention weights
+        nn.init.xavier_uniform_(self.curve_keypoint_cross_attn.q_proj.weight)
+        nn.init.xavier_uniform_(self.curve_keypoint_cross_attn.k_proj.weight)
+        nn.init.xavier_uniform_(self.curve_keypoint_cross_attn.v_proj.weight)
+        nn.init.xavier_uniform_(self.curve_keypoint_cross_attn.out_proj.weight)
+        nn.init.xavier_uniform_(self.keypoint_curve_cross_attn.q_proj.weight)
+        nn.init.xavier_uniform_(self.keypoint_curve_cross_attn.k_proj.weight)
+        nn.init.xavier_uniform_(self.keypoint_curve_cross_attn.v_proj.weight)
+        nn.init.xavier_uniform_(self.keypoint_curve_cross_attn.out_proj.weight)
+
     def forward(self, samples: NestedTensor):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -151,10 +219,21 @@ class DeformableDETR(nn.Module):
             hs[:, :, self.out_pts:], init_reference[:, self.out_pts:], inter_references[:, :, self.out_pts:])
 
         results = {}
+        # Extract curve and keypoint features before final prediction
+        curve_features = hs
+        keypoint_features = pts_hs
+        
+        # Add cross-attention between features
+        curve_enhanced = self.curve_keypoint_cross_attn(curve_features, keypoint_features)
+        keypoint_enhanced = self.keypoint_curve_cross_attn(keypoint_features, curve_features)
+        
+        # Use enhanced features for final prediction
         results['curves'] = self._forward(
-            hs, init_reference, inter_references, class_embed=self.curve_class_embed, bbox_embed=self.curve_points_embed)
+            curve_enhanced, init_reference, inter_references, 
+            class_embed=self.curve_class_embed, bbox_embed=self.curve_points_embed)
         results['keypoints'] = self._forward(
-            pts_hs, pts_init_refer, pts_inter_refer, class_embed=self.keypoint_class_embed, bbox_embed=self.keypoint_point_direction_embed, direction=True)
+            keypoint_enhanced, pts_init_refer, pts_inter_refer, 
+            class_embed=self.keypoint_class_embed, bbox_embed=self.keypoint_point_direction_embed, direction=True)
 
         return results
 

@@ -17,7 +17,7 @@ from datasets.hist_ftc_seg import ftc_seg
 
 
 class GetElements(nn.Module):
-    def __init__(self, eval_score=None, eval_pt_score=0.05):
+    def __init__(self, eval_score=None, eval_pt_score=0.5):
         super(GetElements, self).__init__()
         self.eval_score = eval_score
         self.eval_pt_score = eval_pt_score
@@ -88,12 +88,11 @@ class GetElements(nn.Module):
             endpt_ids = (endpt_score >= self.eval_pt_score)
             junct_ids = (junpt_score >= self.eval_pt_score)
 
-            endpt_score, endpts = nms_pts(np_pts[endpt_ids], endpt_score[endpt_ids], dist_thresh=5)
-            junpt_score, juncpts = nms_pts(np_pts[junct_ids], junpt_score[junct_ids], dist_thresh=5)
-            
+            endpts = np_pts[endpt_ids]
+            juncpts = np_pts[junct_ids]
             # Get the corresponding directions for the filtered points
-            endpt_directions = key_pts_directions[endpt_ids][torch.where(endpt_score >= self.eval_pt_score)[0]]
-            junpt_directions = key_pts_directions[junct_ids][torch.where(junpt_score >= self.eval_pt_score)[0]]
+            endpt_directions = key_pts_directions[endpt_ids]
+            junpt_directions = key_pts_directions[junct_ids]
 
             out_pts.append((
                 (np.round(endpts.cpu().detach().numpy()), np.round(juncpts.cpu().detach().numpy())),
@@ -248,7 +247,7 @@ class PostProcess(nn.Module):
         return results
     
     @staticmethod
-    def visualise_curves(pred, eval_score, src_img, dks=3, thinning=False, ch3mask=False, vmask=1):
+    def visualise_curves(curves, keypoints, eval_score, src_img, dks=3, thinning=False, ch3mask=False, vmask=1):
         """Visualise the predicted curves with postprocessing.
         Tips: for SymPASCAL dks=5, for other datasets, dks=3
 
@@ -272,11 +271,12 @@ class PostProcess(nn.Module):
         h, w = src_img.shape[:2]
         pred_mask = np.zeros((h, w), dtype=np.uint8)
 
-        npt = pred['lines'].shape[-1] // 2
+        npt = curves['lines'].shape[-1] // 2
         assert npt > 1
 
-        _scores = pred['scores'].data.cpu().numpy()
-        _lines = pred['lines'].view(-1, npt, 2).data.cpu().numpy().astype(np.int32)
+        _scores = curves['scores'].data.cpu().numpy()
+
+        _lines = curves['lines'].view(-1, npt, 2).data.cpu().numpy().astype(np.int32)
         ids = _scores > eval_score
         pred_pts = _lines[ids].astype(np.int32)
 
@@ -324,21 +324,17 @@ class PostProcess(nn.Module):
 
         (endpts, juncpts), (endpt_score, junpt_score), (endpt_directions, junpt_directions) = pred['pts']
         endpts, juncpts = endpts.astype(np.int32), juncpts.astype(np.int32)
-        endpts = endpts[endpt_score > eval_score].tolist()
-        juncpts = juncpts[junpt_score > eval_score].tolist()
-        endpt_directions = endpt_directions[endpt_score > eval_score].tolist()
-        junpt_directions = junpt_directions[junpt_score > eval_score].tolist()
         img = np.copy(src_img).astype(np.uint8)
         for i in range(len(endpts)):
             cv2.circle(img, tuple(endpts[i]), radius=2, color=END_PT_COLOR, thickness=2)
             cv2.circle(pred_mask, tuple(endpts[i]), radius=2, color=255, thickness=2)
-            arrow_point = (np.array(endpts[i]) + np.array(endpt_directions[i]) * 10).astype(np.int32)
-            cv2.arrowedLine(img, tuple(endpts[i]), tuple(arrow_point), END_PT_COLOR, thickness=2)
+            arrow_point = (np.array(endpts[i]) + np.array(endpt_directions[i]) * 30).astype(np.int32)
+            cv2.arrowedLine(img, tuple(endpts[i]), tuple(arrow_point), END_PT_COLOR, thickness=1)
         for i in range(len(juncpts)):
             cv2.circle(img, tuple(juncpts[i]), radius=2, color=JUNCTION_PT_COLOR, thickness=2)
             cv2.circle(pred_mask, tuple(juncpts[i]), radius=2, color=128, thickness=2)
-            arrow_point = (np.array(juncpts[i]) + np.array(junpt_directions[i]) * 10).astype(np.int32)
-            cv2.arrowedLine(img, tuple(juncpts[i]), tuple(arrow_point), JUNCTION_PT_COLOR, thickness=2)
+            arrow_point = (np.array(juncpts[i]) + np.array(junpt_directions[i]) * 30).astype(np.int32)
+            cv2.arrowedLine(img, tuple(juncpts[i]), tuple(arrow_point), JUNCTION_PT_COLOR, thickness=1)
         return img, pred_mask
 
     @torch.no_grad()

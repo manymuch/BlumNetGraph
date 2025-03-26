@@ -99,7 +99,7 @@ class Trainer:
 
     def validate(self, use_wandb):
         self.model.eval()
-        score_threshold = self.config["eval_score"]
+        eval_score = self.config["eval_score"]
         sk_evaluator = SkeletonEvaluator()
         val_images = []
         with torch.no_grad():
@@ -122,7 +122,7 @@ class Trainer:
                 pred = results_dict['curves'][0]
                 ptspred = results_dict['keypoints'][0]
 
-                _, pred_mask = self.postprocessor.visualise_curves(pred, 0.65, np.zeros((h, w, 3), dtype=np.uint8))
+                _, pred_mask = self.postprocessor.visualise_curves(pred, ptspred, eval_score, np.zeros((h, w, 3), dtype=np.uint8))
                 sk_evaluator.update([(gt_skeleton, pred_mask, inputName)])
 
                 # Append only the first 4 visualizations.
@@ -130,8 +130,8 @@ class Trainer:
                     raw_img = Image.open(inputName).convert("RGB")
                     _raw_img = np.array(raw_img)[:, :, ::-1]
                     vis_img = np.copy(_raw_img)
-                    vis_img, curves_mask = self.postprocessor.visualise_curves(pred, 0.65, vis_img, thinning=True, ch3mask=True, vmask=255)
-                    pred_vis, pts_mask = self.postprocessor.visualise_pts(ptspred, 0.5, curves_mask)
+                    vis_img, curves_mask = self.postprocessor.visualise_curves(pred, ptspred, eval_score, vis_img, thinning=True, ch3mask=True, vmask=255)
+                    pred_vis, pts_mask = self.postprocessor.visualise_pts(ptspred, eval_score, curves_mask)
                     
                     gt_vis = visualize_target(target)
                     gt_vis = cv2.resize(gt_vis, (vis_img.shape[1], vis_img.shape[0]))
@@ -141,7 +141,7 @@ class Trainer:
                     vis_combined = cv2.cvtColor(vis_combined, cv2.COLOR_BGR2RGB)
                     val_images.append(wandb.Image(vis_combined, caption=f"{inputName}"))
 
-        metrics = sk_evaluator.summarize(score_threshold=score_threshold, offset_threshold=0.01)
+        metrics = sk_evaluator.summarize(score_threshold=eval_score, offset_threshold=0.01)
         results = {
             "val_images": val_images,
             "val_f1_cnt": metrics.get('cnt_f1', 0),
