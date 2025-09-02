@@ -6,7 +6,6 @@
 # ------------------------------------------------------------------------
 
 
-import copy
 import math
 import torch
 import torch.nn.functional as F
@@ -17,10 +16,6 @@ from datasets.sk_points import SkPts
 from datasets.data_prefetcher import NestedTensor
 
 skparser = SkPts()
-
-
-def _get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
 class CrossAttention(nn.Module):
@@ -81,7 +76,7 @@ class DeformableDETR(nn.Module):
     """ This is the Deformable DETR module that performs object detection """
 
     def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels,
-                 aux_loss=True, with_box_refine=False, cpts=1, out_pts=0):
+                 aux_loss=True, cpts=1, out_pts=0):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -90,7 +85,6 @@ class DeformableDETR(nn.Module):
             num_queries: number of object queries, ie detection slot. This is the maximal number of objects
                          DETR can detect in a single image. For COCO, we recommend 100 queries.
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
-            with_box_refine: iterative bounding box refinement
             cpts: int, number of points to describe a curve
             out_pts, int, the output number of end points and junction points
         """
@@ -132,7 +126,6 @@ class DeformableDETR(nn.Module):
                 )])
         self.backbone = backbone
         self.aux_loss = aux_loss
-        self.with_box_refine = with_box_refine
 
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
@@ -146,33 +139,12 @@ class DeformableDETR(nn.Module):
         nn.init.constant_(self.keypoint_point_direction_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.keypoint_point_direction_embed.layers[-1].bias.data, 0)
         num_pred = transformer.decoder.num_layers
-        if with_box_refine:
-            self.curve_class_embed = _get_clones(self.curve_class_embed, num_pred)
-            self.curve_points_embed = _get_clones(self.curve_points_embed, num_pred)
-            nn.init.constant_(self.curve_points_embed[0].layers[-1].bias.data[2:], -2.0)
-            # hack implementation for iterative bounding box refinement
-            self.transformer.decoder.bbox_embed = self.curve_points_embed
-        else:
-            nn.init.constant_(self.curve_points_embed.layers[-1].bias.data[2:], -2.0)
-            self.curve_class_embed = nn.ModuleList([self.curve_class_embed for _ in range(num_pred)])
-            self.curve_points_embed = nn.ModuleList([self.curve_points_embed for _ in range(num_pred)])
-            self.keypoint_class_embed = nn.ModuleList([self.keypoint_class_embed for _ in range(num_pred)])
-            self.keypoint_point_direction_embed = nn.ModuleList([self.keypoint_point_direction_embed for _ in range(num_pred)])
-            self.transformer.decoder.bbox_embed = None
-
-        # Cross-attention modules for feature exchange
-        self.curve_keypoint_cross_attn = CrossAttention(hidden_dim, hidden_dim)
-        self.keypoint_curve_cross_attn = CrossAttention(hidden_dim, hidden_dim)
-
-        # Initialize cross-attention weights
-        nn.init.xavier_uniform_(self.curve_keypoint_cross_attn.q_proj.weight)
-        nn.init.xavier_uniform_(self.curve_keypoint_cross_attn.k_proj.weight)
-        nn.init.xavier_uniform_(self.curve_keypoint_cross_attn.v_proj.weight)
-        nn.init.xavier_uniform_(self.curve_keypoint_cross_attn.out_proj.weight)
-        nn.init.xavier_uniform_(self.keypoint_curve_cross_attn.q_proj.weight)
-        nn.init.xavier_uniform_(self.keypoint_curve_cross_attn.k_proj.weight)
-        nn.init.xavier_uniform_(self.keypoint_curve_cross_attn.v_proj.weight)
-        nn.init.xavier_uniform_(self.keypoint_curve_cross_attn.out_proj.weight)
+        nn.init.constant_(self.curve_points_embed.layers[-1].bias.data[2:], -2.0)
+        self.curve_class_embed = nn.ModuleList([self.curve_class_embed for _ in range(num_pred)])
+        self.curve_points_embed = nn.ModuleList([self.curve_points_embed for _ in range(num_pred)])
+        self.keypoint_class_embed = nn.ModuleList([self.keypoint_class_embed for _ in range(num_pred)])
+        self.keypoint_point_direction_embed = nn.ModuleList([self.keypoint_point_direction_embed for _ in range(num_pred)])
+        self.transformer.decoder.bbox_embed = None
 
     def forward(self, samples: NestedTensor):
         """ The forward expects a NestedTensor, which consists of:
@@ -223,16 +195,12 @@ class DeformableDETR(nn.Module):
         curve_features = hs
         keypoint_features = pts_hs
         
-        # Add cross-attention between features
-        curve_enhanced = self.curve_keypoint_cross_attn(curve_features, keypoint_features)
-        keypoint_enhanced = self.keypoint_curve_cross_attn(keypoint_features, curve_features)
-        
         # Use enhanced features for final prediction
         results['curves'] = self._forward(
-            curve_enhanced, init_reference, inter_references, 
+            curve_features, init_reference, inter_references, 
             class_embed=self.curve_class_embed, bbox_embed=self.curve_points_embed)
         results['keypoints'] = self._forward(
-            keypoint_enhanced, pts_init_refer, pts_inter_refer, 
+            keypoint_features, pts_init_refer, pts_inter_refer, 
             class_embed=self.keypoint_class_embed, bbox_embed=self.keypoint_point_direction_embed, direction=True)
 
         return results
@@ -306,7 +274,6 @@ def build_model(config, device):
         num_queries=config["num_queries"],
         num_feature_levels=config["num_feature_levels"],
         aux_loss=config["aux_loss"],
-        with_box_refine=config["with_box_refine"],
         cpts=config["points_per_path"],
         out_pts=config["out_pts"],
     )

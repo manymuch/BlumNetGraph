@@ -247,7 +247,7 @@ class PostProcess(nn.Module):
         return results
     
     @staticmethod
-    def visualise_curves(curves, keypoints, eval_score, src_img, dks=3, thinning=False, ch3mask=False, vmask=1):
+    def visualise_curves(curves, eval_score, src_img, dks=3, thinning=False, ch3mask=False, vmask=1):
         """Visualise the predicted curves with postprocessing.
         Tips: for SymPASCAL dks=5, for other datasets, dks=3
 
@@ -274,9 +274,9 @@ class PostProcess(nn.Module):
         npt = curves['lines'].shape[-1] // 2
         assert npt > 1
 
-        _scores = curves['scores'].data.cpu().numpy()
+        _scores = curves['scores']
 
-        _lines = curves['lines'].view(-1, npt, 2).data.cpu().numpy().astype(np.int32)
+        _lines = curves['lines'].reshape(-1, npt, 2).astype(np.int32)
         ids = _scores > eval_score
         pred_pts = _lines[ids].astype(np.int32)
 

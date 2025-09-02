@@ -1,69 +1,70 @@
 wandb:
   project: BlumNetGraph
-  name: blumnet_refactor_2
+  name: blumnet_baseline
   dir: "tmp"
-# General parameters
-device: cuda
-seed: 42
+
 load_path: "pretrain"
-eval_score: 0.65
 output_dir: "tmp/checkpoints"
 
-# Optimizer parameters
+# training parameters
+batch_size: 1
+num_workers: 2
+device: cuda
+seed: 42
+
+# optimizer parameters
+lr_backbone_names: ["backbone.0"]
+lr_linear_proj_names: ["reference_points", "sampling_offsets"]
 lr: 0.0002
 lr_backbone: 0.00002
 lr_linear_proj_mult: 0.1
 weight_decay: 0.0001
-lr_drop: 160
 clip_max_norm: 0.1
-# Training parameters
-batch_size: 1
-epochs: 40
-num_workers: 2
-eval_epochs: 8
-t_0: 41
-t_mult: 2
+
+# scheduler parameters
+epochs: 90
+eval_epochs: 29
+use_scheduler: true
+t_0: 30
+t_mult: 1
+
 # Backbone parameters
 backbone: swin_base # swin_base, swin_small
 dilation: false
 position_embedding: sine
-position_embedding_scale: 6.283185307179586
 num_feature_levels: 3
-lr_backbone_names: ["backbone.0"]
-lr_linear_proj_names: ["reference_points", "sampling_offsets"]
 
 # Transformer parameters
 enc_layers: 6
 dec_layers: 6
 dim_feedforward: 1024
 hidden_dim: 256
-dropout: 0.1
+dropout: 0.01
 nheads: 8
-num_queries: 1024
 points_per_path: 2
 dec_n_points: 8
 enc_n_points: 8
-
-# Output parameters
-out_pts: 128
-aux_loss: false
+num_queries: 1024
+out_pts: 32
 
 # Matcher and loss parameters
 matcher_class_weight: 1
 matcher_regression_weight: 5
-focal_ce_cost: False
+focal_ce_cost: false  # matcher
 loss_class_weight: 1
 loss_regression_weight: 5
-loss_direction_weight: 0.2
-loss_keypoint_weight: 0.1
+loss_direction_weight: 0.002
+loss_keypoint_weight: 0.001
 loss_curve_weight: 1
 focal_alpha: 0.25
-
-with_box_refine: false
+aux_loss: false
 
 # Dataset parameters
 rule: overlap_10_0.6
 data_root: "data"
+eval_score: 0.65
+dks: 3
 train_split: "data/sk1491/train/train_pair.lst"
 test_split: "data/sk1491/test/test_pair.lst"
-random_rotate: False
+random_rotate: false
+shuffle_train: false

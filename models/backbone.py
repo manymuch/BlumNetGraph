@@ -120,7 +120,8 @@ class Backbone(BackboneBase):
         if name == 'inception_v3':
             backbone = Inception3()
             if pretrained:
-                state_dict = torchvision.models.inception_v3(pretrained=True).state_dict()
+                from torchvision.models import Inception_V3_Weights
+                state_dict = torchvision.models.inception_v3(weights=Inception_V3_Weights.DEFAULT).state_dict()
                 backbone.load_state_dict({k: v for k, v in state_dict.items() if k in backbone.state_dict()})
         elif name in pretrained_swin_paths:
             pretrained_path = os.path.join(
@@ -131,9 +132,14 @@ class Backbone(BackboneBase):
             print(f"Loaded pretrained weights from {pretrained_path}.")
         elif name in ['resnet50', 'resnet101']:
             norm_layer = FrozenBatchNorm2d
+            weights = None
+            if pretrained:
+                from torchvision.models import ResNet50_Weights, ResNet101_Weights
+                weights = ResNet50_Weights.DEFAULT if name == 'resnet50' else ResNet101_Weights.DEFAULT
             backbone = getattr(torchvision.models, name)(
                 replace_stride_with_dilation=[False, False, dilation],
-                pretrained=pretrained, norm_layer=norm_layer)
+                weights=weights,
+                norm_layer=norm_layer)
         elif name == 'vgg16':
             backbone = VGGfs(cfg['D'])
             pretrained_path = "pretrained/vgg16_caffe-292e1171.pth"

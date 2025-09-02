@@ -66,7 +66,8 @@ class Trainer:
         # Setup data loaders
         train_dataset = build_dataset(is_train=True, config=config)
         test_dataset = build_dataset(is_train=False, config=config)
-        self.train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True,
+        shuffle_train = config["shuffle_train"]
+        self.train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=shuffle_train,
                                        collate_fn=collate_fn, num_workers=config["num_workers"], pin_memory=True)
         self.test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False,
                                       collate_fn=collate_fn, num_workers=config["num_workers"], pin_memory=True)
@@ -94,7 +95,8 @@ class Trainer:
             self.optimizer.step()
             total_loss += loss.item()
         avg_loss = total_loss / len(self.train_loader)
-        self.lr_scheduler.step()
+        if self.config["use_scheduler"]:
+            self.lr_scheduler.step()
         return avg_loss
 
     def validate(self, use_wandb):
@@ -121,8 +123,10 @@ class Trainer:
 
                 pred = results_dict['curves'][0]
                 ptspred = results_dict['keypoints'][0]
+                pred = {k: v.cpu().numpy() for k, v in pred.items()}
 
-                _, pred_mask = self.postprocessor.visualise_curves(pred, ptspred, eval_score, np.zeros((h, w, 3), dtype=np.uint8))
+                dks = self.config["dks"]
+                _, pred_mask = self.postprocessor.visualise_curves(pred, eval_score, np.zeros((h, w, 3), dtype=np.uint8), dks=dks)
                 sk_evaluator.update([(gt_skeleton, pred_mask, inputName)])
 
                 # Append only the first 4 visualizations.
@@ -130,7 +134,7 @@ class Trainer:
                     raw_img = Image.open(inputName).convert("RGB")
                     _raw_img = np.array(raw_img)[:, :, ::-1]
                     vis_img = np.copy(_raw_img)
-                    vis_img, curves_mask = self.postprocessor.visualise_curves(pred, ptspred, eval_score, vis_img, thinning=True, ch3mask=True, vmask=255)
+                    vis_img, curves_mask = self.postprocessor.visualise_curves(pred, eval_score, vis_img, thinning=True, ch3mask=True, vmask=255, dks=dks)
                     pred_vis, pts_mask = self.postprocessor.visualise_pts(ptspred, eval_score, curves_mask)
                     
                     gt_vis = visualize_target(target)
