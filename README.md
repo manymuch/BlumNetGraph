@@ -1,7 +1,6 @@
 ## Introduction
 
-BlumNet2 is the sucessor of [BlumNet](https://github.com/cong-yang/BlumNet). 
-* Improved with graph loss.  
+BlumNet-J is the sucessor of [BlumNet](https://github.com/cong-yang/BlumNet).
 
 ## Citation
 TBD
@@ -54,7 +53,7 @@ TBD
 
 F1 Score  
 | Backbone | sk506 | sk1491 | WH-SYMMAX | SymPASCAL |
-| ----- | ----- | ----- | ----- | ----- |
-| SwinBase |     | 0.833  |    |     |
+| -----    | ----- | -----  | -----     | -----     |
+| SwinBase | 0.801 | 0.839  |0.910      | 0.650     |
 
 
